@@ -10,7 +10,11 @@ python = "^3.10"
 ipykernel = "^6.29.4"
 huggingface-hub = {version = "^0.23.0", extras = ["cli"]}
 torch = "~2.0"
+transformers = "^4.41.1"
+datasets = "^2.19.1"
 cupbearer = {path = "cupbearer", develop = true}
+einops = "^0.8.0"
+accelerate = "^0.30.1"
 
 
 [build-system]
