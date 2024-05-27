@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "elk-experiments"
+version = "0.1.0"
+description = ""
+authors = ["Oliver Daniels-Koch <danielskoch.oliver@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+ipykernel = "^6.29.4"
+huggingface-hub = {version = "^0.23.0", extras = ["cli"]}
+torch = "~2.0"
+cupbearer = {path = "cupbearer", develop = true}
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

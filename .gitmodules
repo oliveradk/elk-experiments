@@ -1,0 +1,3 @@
+[submodule "cupbearer"]
+	path = cupbearer
+	url = git@github.com:ejnnr/cupbearer.git
