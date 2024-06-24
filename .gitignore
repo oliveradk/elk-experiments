@@ -2,3 +2,4 @@ activation_caches
 datasets
 output
 .cupbearer_cache
+.vscode
