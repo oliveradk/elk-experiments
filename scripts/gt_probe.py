@@ -16,6 +16,8 @@ def train():
     # cache = None
 
     names = [
+        # "hf_model.transformer.h.10.output",
+        # "hf_model.transformer.h.19.ouptut",
         "hf_model.transformer.ln_f.output"
     ]
 
@@ -42,7 +44,7 @@ def train():
     )
 
     scripts.train_detector(
-        task, detector, save_path=exp_dir + "/" +  "mahalanobis", eval_batch_size=4, batch_size=4
+        task, detector, save_path=exp_dir + "/" +  "mahalanobis", eval_batch_size=8, batch_size=8
     ) 
 
 
