@@ -1,1 +1,7 @@
+activation_caches
+datasets
 output
+.cupbearer_cache
+.vscode
+__pycache__
+multirun

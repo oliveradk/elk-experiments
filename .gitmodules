@@ -1,3 +1,9 @@
 [submodule "cupbearer"]
 	path = cupbearer
 	url = git@github.com:ejnnr/cupbearer.git
+[submodule "edge-attribution-patching"]
+	path = edge-attribution-patching
+	url = git@github.com:Aaquib111/edge-attribution-patching.git
+[submodule "hex-nn"]
+	path = hex-nn
+	url = git@github.com:ejnnr/hex-nn.git

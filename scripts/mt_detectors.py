@@ -16,7 +16,7 @@ def train():
     # cache = None
 
     names = [
-        # "hf_model.transformer.h.10.ln_1.output",
+        # "hf_model.transformer.h.10.output",
         # "hf_model.transformer.h.19.ouptut",
         "hf_model.transformer.ln_f.output"
 
