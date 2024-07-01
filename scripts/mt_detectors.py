@@ -19,27 +19,45 @@ def train():
         # "hf_model.transformer.h.10.output",
         # "hf_model.transformer.h.19.ouptut",
         "hf_model.transformer.ln_f.output"
+
     ]
 
     def get_activation_at_last_token(
-        activation: torch.Tensor, inputs: list[str], name: str
+        activation: torch.Tensor | tuple, inputs: list[str], name: str
     ):
+        if isinstance(activation, tuple):
+            activation = activation[0]
         assert activation.shape[1] == 1024
         return activation[:, -1, :]
+    
+    def get_activations_at_sensor_tokens(
+        activation: torch.Tensor, inputs: list[str], name: str,
+    ):
+        if isinstance(activation, tuple):
+            activation = activation[0]
+        tokens = task.model.tokenize(inputs, **task.model.tokenize_kwargs)["input_ids"] # batch size x seq len
+        flat_tensor_token_idxs = (tokens == task.model.hf_model.sensor_token_id).nonzero(as_tuple=True)[1]
+        tensor_token_idxs = flat_tensor_token_idxs.view(-1, task.model.hf_model.n_sensors)
+        sensor_acts = activation.gather(
+            1, tensor_token_idxs.unsqueeze(-1).expand(-1, -1, task.model.hf_model.config.emb_dim)
+        )
+        last_act = activation[:, -1, :].unsqueeze(1)
+        sensor_and_last_acts = torch.concat([sensor_acts, last_act], dim=1)
+        return sensor_and_last_acts
 
-    gt_detector = detectors.SupervisedLinearProbe(
-        names, activation_processing_func=get_activation_at_last_token,
-        layer_aggregation="mean", cache=cache
-    )
+    # gt_detector = detectors.SupervisedLinearProbe(
+    #     names, activation_processing_func=get_activation_at_last_token,
+    #     layer_aggregation="mean", cache=cache
+    # )
 
-    scripts.train_detector(
-        task, gt_detector, save_path=exp_dir + "/" + "gt", eval_batch_size=8, batch_size=8, max_iter=100 # more iterations overfits I think?
-    )
+    # scripts.train_detector(
+    #     task, gt_detector, save_path=exp_dir + "/" + "gt", eval_batch_size=8, batch_size=8, max_iter=100 # more iterations overfits I think?
+    # )
 
     # cache.store(exp_dir + "/" + "cache")
 
     detector = detectors.MahalanobisDetector(
-        activation_names=names, activation_processing_func=get_activation_at_last_token,
+        activation_names=names, activation_processing_func=get_activations_at_sensor_tokens,#get_activation_at_last_token,
         layer_aggregation="mean", cache=cache
     )
 
