@@ -1,25 +1,29 @@
 import torch
 from abc import ABC
 from functools import partial
+
+import numpy as np
 from torch import Tensor
 
+from transformer_lens import HookedTransformer
+
 from cupbearer import utils
-from cupbearer.detectors.statistical import StatisticalDetector, MahalanobisDetector
+from cupbearer.detectors.statistical import StatisticalDetector
 
 from eap.eap_wrapper import EAP_clean_forward_hook, EAP_clean_backward_hook
 from eap.eap_graph import EAPGraph
 
+def node_layer(node):
+    return int(node.split(".")[1])
 
+#TODO: put in EAPGraph
 
-def get_edge_scores_filter_indices(edge_filter, graph):
-    valid_upstream_idxs = [i for (i, node) in enumerate(graph.upstream_nodes) if edge_filter(node)]
-    valid_downstream_idxs = [i for (i, node) in enumerate(graph.downstream_nodes) if edge_filter(node)]
-    uu, dd = torch.meshgrid(torch.tensor(valid_upstream_idxs), torch.tensor(valid_downstream_idxs), indexing='ij')
-    return uu, dd
+def valid_edge(edge: tuple[str, str]):
+    return node_layer(edge[0]) <= node_layer(edge[1])
 
+def layer_edge_filter(edge, excluded_layers={}):
+    return (node_layer(edge[0]) not in excluded_layers) and (node_layer(edge[1]) not in excluded_layers)
 
-
-from transformer_lens import HookedTransformer
 
 class EAPDetector(StatisticalDetector, ABC):
 
@@ -41,16 +45,31 @@ class EAPDetector(StatisticalDetector, ABC):
         self.seq_len = seq_len 
         self.trusted_graph = None 
         self.untrusted_graphs = []
+        self.edge_names_arr = None
         super().__init__(
             activation_names=[self.EAP_SCORES_NAME], 
             activation_processing_func=lambda x: x,
             **kwargs
         )
+
+    def set_graph(self, model):
+        self.graph = EAPGraph(model.cfg, self.upstream_nodes, self.downstream_nodes, aggregate_batch=False, verbose=False)
+        if self.edge_names_arr is None:
+            self.edge_names_arr = np.array([
+                [(upstream_node, downstream_node) for downstream_node in self.graph.downstream_nodes]
+                for upstream_node in self.graph.upstream_nodes]
+            )
+        # valid edge mask
+        valid_edge_mask = np.apply_along_axis(valid_edge, 2, self.edge_names_arr)
+        # edge filter mask
+        edge_filter_mask = np.apply_along_axis(self.edge_filter, 2, self.edge_names_arr)
+
+        self.edge_mask = valid_edge_mask & edge_filter_mask
+        self.num_valid_edges = self.edge_mask.sum()
     
     def set_model(self, model: HookedTransformer):
         super().set_model(model)
-        self.graph = EAPGraph(model.cfg, self.upstream_nodes, self.downstream_nodes, aggregate_batch=False, verbose=False)
-        self.uu, self.dd = get_edge_scores_filter_indices(self.edge_filter, self.graph)
+        self.set_graph(model)
     
     def _set_hooks(self, batch_size, seq_len):
         # import ipdb; ipdb.set_trace()
@@ -95,8 +114,6 @@ class EAPDetector(StatisticalDetector, ABC):
 
             self.model.zero_grad()
             self.upstream_activations_difference *= 0
-            return {self.EAP_SCORES_NAME: self.graph.eap_scores[:, self.uu, self.dd]}
-    
-
-class EAPMahalanobisDetector(EAPDetector, MahalanobisDetector):
-    pass
+            eap_scores_flat = self.graph.eap_scores[:, self.edge_mask]
+            assert eap_scores_flat.shape == (batch_size, self.num_valid_edges)
+            return {self.EAP_SCORES_NAME: eap_scores_flat}
