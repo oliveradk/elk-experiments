@@ -16,3 +16,14 @@ def get_task_subset(task, trusted_subset=None, normal_test_subset=None, anomalou
         clean_test_data=TinyNaturalMechanismsDataset(normal_test_data), 
         anomalous_test_data=TinyNaturalMechanismsDataset(anomalous_test_data)
     )
+
+def dataset_to_dict(dataset):
+    return [{"prefix_tokens": x[0], "completion_token": x[1]} for x in dataset]
+
+def task_data_to_dicts(task):
+    return tasks.Task.from_separate_data(
+        model=task.model, 
+        trusted_data=dataset_to_dict(task.trusted_data),
+        clean_test_data=dataset_to_dict(task.test_data.normal_data), 
+        anomalous_test_data=dataset_to_dict(task.test_data.anomalous_data)
+    )

@@ -35,14 +35,14 @@ class EAPDetector(StatisticalDetector, ABC):
           upstream_nodes=["head", "mlp"], 
           downstream_nodes=["head", "mlp"],
           edge_filter=lambda x : True,
-          seq_len=16, # would ideally pass on train and eval, but don't want to change script (shrug)
+          input_filter = lambda x: x,
           **kwargs
     ):
         self.effect_prob_func = effect_prob_func
         self.upstream_nodes = upstream_nodes
         self.downstream_nodes = downstream_nodes
         self.edge_filter = edge_filter
-        self.seq_len = seq_len 
+        self.input_filter = input_filter
         self.trusted_graph = None 
         self.untrusted_graphs = []
         self.edge_names_arr = None
@@ -100,16 +100,18 @@ class EAPDetector(StatisticalDetector, ABC):
         )
 
     def _get_activations_no_cache(self, inputs) -> dict[str, Tensor]:
+        # TODO: include competion token
         with torch.enable_grad():
             inputs = utils.inputs_to_device(inputs, self.model.cfg.device)
-            batch_size, seq_len = inputs.shape[:2]
+            model_input = self.input_filter(inputs)
+            batch_size, seq_len = model_input.shape[:2]
             self.model.reset_hooks()
             self._set_hooks(batch_size, seq_len=seq_len)
             #TODO: add support for corrupted tokens
             self.model.add_hook(self.upstream_hook_filter, self.clean_upstream_hook_fn, "fwd")
             self.model.add_hook(self.downstream_hook_filter, self.clean_downstream_hook_fn, "bwd")
 
-            value = self.effect_prob_func(self.model(inputs, return_type="logits"))
+            value = self.effect_prob_func(self.model(model_input, return_type="logits"), inputs)
             value.backward()
 
             self.model.zero_grad()
