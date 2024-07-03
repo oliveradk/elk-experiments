@@ -8,7 +8,7 @@ from torch import Tensor
 from transformer_lens import HookedTransformer
 
 from cupbearer import utils
-from cupbearer.detectors.statistical import StatisticalDetector
+from cupbearer.detectors import ActivationBasedDetector
 
 from eap.eap_wrapper import EAP_clean_forward_hook, EAP_clean_backward_hook
 from eap.eap_graph import EAPGraph
@@ -24,8 +24,22 @@ def valid_edge(edge: tuple[str, str]):
 def layer_edge_filter(edge, excluded_layers={}):
     return (node_layer(edge[0]) not in excluded_layers) and (node_layer(edge[1]) not in excluded_layers)
 
+def effect_prob_func(logits, effect_tokens=None, inputs=None):
+    assert logits.ndim == 3
+    assert effect_tokens is not None
+    # Sum over vocab and batch dim (for now we're just computing attribution values, we'll deal with per data instance later)
+    probs = logits[:, -1, :].softmax(dim=-1)
+    out = probs[:, effect_tokens].mean(dim=-1).mean() # mean over effect tokens, mean over batch
+    # out = logits[:, -1, effect_tokens].mean()
+    return out
 
-class EAPDetector(StatisticalDetector, ABC):
+def set_model_hooks(model: HookedTransformer):
+    model.set_use_hook_mlp_in(True)
+    model.set_use_split_qkv_input(True)
+    model.set_use_attn_result(True)
+
+
+class EAPDetector(ActivationBasedDetector, ABC):
 
     EAP_SCORES_NAME = "eap_scores"
     
