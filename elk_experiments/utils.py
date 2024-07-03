@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 from matplotlib import pyplot as plt
 
+import torch
+
 from cupbearer import tasks, detectors, scripts
 from cupbearer.detectors.anomaly_detector import AnomalyDetector
 from cupbearer.detectors.activation_based import ActivationCache
@@ -68,3 +70,19 @@ def learn_graph_cache(
         )
         graph.save_scores(cache_path)
     return graph
+
+def get_activation_at_last_token(
+    activation: torch.Tensor, inputs: list[list[int]], name: str
+):
+    if activation.ndim == 3:
+        # Residual stream or equivalent, shape is (batch, seq, hidden)
+        return activation[:, -1, :]
+    elif activation.ndim == 4 and activation.shape[-1] == activation.shape[-2]:
+        # Attention, shape is (batch, num_heads, query, key)
+        # TODO: this could also be Q/K/V if n_heads happens to be head_dim
+        return activation[:, :, -1, :].reshape(activation.shape[0], -1)
+    elif activation.ndim == 4:
+        # Query/key/value, shape is (batch, seq, num_heads, hidden)
+        return activation[:, -1, :, :].reshape(activation.shape[0], -1)
+    else:
+        raise ValueError(f"Unexpected activation shape: {activation.shape}")
