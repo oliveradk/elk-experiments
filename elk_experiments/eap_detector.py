@@ -111,7 +111,7 @@ class EAPDetector(StatisticalDetector, ABC):
             self.model.add_hook(self.upstream_hook_filter, self.clean_upstream_hook_fn, "fwd")
             self.model.add_hook(self.downstream_hook_filter, self.clean_downstream_hook_fn, "bwd")
 
-            value = self.effect_prob_func(self.model(model_input, return_type="logits"), inputs)
+            value = self.effect_prob_func(self.model(model_input, return_type="logits"), inputs=inputs)
             value.backward()
 
             self.model.zero_grad()
