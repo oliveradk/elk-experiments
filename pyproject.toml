@@ -22,6 +22,7 @@ omegaconf = "^2.3.0"
 hydra-core = "^1.3.2"
 hydra-submitit-launcher = "^1.2.0"
 cupbearer = {path = "cupbearer", develop = true}
+eap = {path = "edge-attribution-patching", develop = true}
 
 
 [build-system]

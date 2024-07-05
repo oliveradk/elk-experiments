@@ -634,6 +634,26 @@ files = [
 six = ">=1.4.0"
 
 [[package]]
+name = "eap"
+version = "0.1.0"
+description = ""
+optional = false
+python-versions = "*"
+files = []
+develop = true
+
+[package.dependencies]
+jaxtyping = "*"
+numpy = "*"
+torch = "*"
+tqdm = "*"
+transformer_lens = "*"
+
+[package.source]
+type = "directory"
+url = "edge-attribution-patching"
+
+[[package]]
 name = "einops"
 version = "0.8.0"
 description = "A new flavour of deep learning operations"
@@ -4187,4 +4207,4 @@ multidict = ">=4.0"
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "5865a558552164c43bdb04e64e3977d29a218a13c861458e2aaaeaf5fe748c26"
+content-hash = "f2384df1fa033dfcb7c8e949ef03239e4275c83cee2cffa2d2d12f0fba399a33"
