@@ -26,6 +26,7 @@ transformer-lens = {path = "TransformerLens", develop = true}
 pytest = "^8.2.2"
 pytest-doctestplus = "^1.2.1"
 nbval = "^0.11.0"
+nb-clean = "^3.3.0"
 
 
 [build-system]
