@@ -24,12 +24,16 @@ def valid_edge(edge: tuple[str, str]):
 def layer_edge_filter(edge, excluded_layers={}):
     return (node_layer(edge[0]) not in excluded_layers) and (node_layer(edge[1]) not in excluded_layers)
 
-def effect_prob_func(logits, effect_tokens=None, inputs=None):
+def effect_prob_func(logits, effect_tokens=None, other_tokens=None, inputs=None):
     assert logits.ndim == 3
     assert effect_tokens is not None
     # Sum over vocab and batch dim (for now we're just computing attribution values, we'll deal with per data instance later)
-    probs = logits[:, -1, :].softmax(dim=-1)
-    out = probs[:, effect_tokens].mean(dim=-1).mean() # mean over effect tokens, mean over batch
+    last_logits = logits[:, -1, :]
+    out = last_logits[:, effect_tokens].mean(dim=-1)
+    if other_tokens is not None:
+        out -= last_logits[:, other_tokens].mean(dim=-1)
+    print(out)
+    out = out.sum() # mean over batch
     # out = logits[:, -1, effect_tokens].mean()
     return out
 
