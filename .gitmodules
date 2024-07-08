@@ -7,3 +7,6 @@
 [submodule "hex-nn"]
 	path = hex-nn
 	url = git@github.com:ejnnr/hex-nn.git
+[submodule "TransformerLens"]
+	path = TransformerLens
+	url = git@github.com:oliveradk/TransformerLens.git
