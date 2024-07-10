@@ -10,3 +10,6 @@
 [submodule "TransformerLens"]
 	path = TransformerLens
 	url = git@github.com:oliveradk/TransformerLens.git
+[submodule "auto-circuit"]
+	path = auto-circuit
+	url = git@github.com:oliveradk/auto-circuit.git

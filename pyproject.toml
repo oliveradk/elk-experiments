@@ -9,12 +9,11 @@ readme = "README.md"
 python = "^3.10"
 ipykernel = "^6.29.4"
 huggingface-hub = {version = "^0.23.0", extras = ["cli"]}
-torch = "~2.0"
 transformers = "^4.41.1"
 datasets = "^2.19.1"
-einops = "^0.8.0"
+einops = "^0.6.1"
 accelerate = "^0.30.1"
-blobfile = "^2.1.1"
+blobfile = "^2.0.2"
 ipywidgets = "^8.1.3"
 ipdb = "^0.13.13"
 omegaconf = "^2.3.0"
@@ -22,11 +21,13 @@ hydra-core = "^1.3.2"
 hydra-submitit-launcher = "^1.2.0"
 cupbearer = {path = "cupbearer", develop = true}
 eap = {path = "edge-attribution-patching", develop = true}
-transformer-lens = {path = "TransformerLens", develop = true}
 pytest = "^8.2.2"
 pytest-doctestplus = "^1.2.1"
 nbval = "^0.11.0"
 nb-clean = "^3.3.0"
+auto-circuit = {path = "auto-circuit", develop = true}
+transformer-lens = "^1.13.0"
+torch = "2.1.1"
 
 
 [build-system]
