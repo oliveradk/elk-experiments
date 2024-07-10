@@ -86,3 +86,17 @@ def get_activation_at_last_token(
         return activation[:, -1, :, :].reshape(activation.shape[0], -1)
     else:
         raise ValueError(f"Unexpected activation shape: {activation.shape}")
+
+
+def repo_path_to_abs_path(path: str) -> Path:
+    """
+    Convert a path relative to the repository root to an absolute path.
+
+    Args:
+        path: A path relative to the repository root.
+
+    Returns:
+        The absolute path.
+    """
+    repo_abs_path = Path(__file__).parent.parent.absolute()
+    return repo_abs_path / path
