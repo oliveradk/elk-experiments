@@ -27,7 +27,8 @@ nbval = "^0.11.0"
 nb-clean = "^3.3.0"
 auto-circuit = {path = "auto-circuit", develop = true}
 transformer-lens = "^1.13.0"
-torch = "2.1.1"
+torch = "^2.2.1"
+hex-nn = {path = "hex-nn", develop = true}
 
 
 [build-system]
