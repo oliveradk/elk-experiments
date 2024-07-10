@@ -37,10 +37,14 @@ def effect_prob_func(logits, effect_tokens=None, other_tokens=None, inputs=None)
     # out = logits[:, -1, effect_tokens].mean()
     return out
 
-def set_model_hooks(model: HookedTransformer):
+def set_model(model: HookedTransformer):
     model.set_use_hook_mlp_in(True)
     model.set_use_split_qkv_input(True)
     model.set_use_attn_result(True)
+    model.eval()
+    for param in model.parameters():
+        param.requires_grad = False
+    
 
 
 class EAPDetector(ActivationBasedDetector, ABC):
