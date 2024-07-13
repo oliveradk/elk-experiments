@@ -260,6 +260,7 @@ class AutoCircuitGradScoresDetector(AutoCircuitDetector, StatisticalDetector):
         self, 
         effect_tokens: list[int],
         ablation_type: AblationType = AblationType.ZERO,
+        metric: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] = batch_avg_answer_diff,
         ignored_layers: Set[int] = {},
         device: str = "cpu",
         cache: ActivationCache | None = None,
@@ -268,6 +269,7 @@ class AutoCircuitGradScoresDetector(AutoCircuitDetector, StatisticalDetector):
     ):
         assert ablation_type.mean_over_dataset or ablation_type.ZERO, "Only mean over dataset and zero ablation supported"
         self.ablation_type = ablation_type
+        self.metric = metric
         self.patch_outs: torch.Tensor = None
         self.ignored_layers = ignored_layers
         super().__init__(
@@ -340,8 +342,7 @@ class AutoCircuitGradScoresDetector(AutoCircuitDetector, StatisticalDetector):
         #TODO: add filtering 
         with train_mask_mode(self.model):
             set_all_masks(self.model, val=0.0)
-            for i, batch in enumerate(data_loader):
-                print("batch", i)
+            for batch in data_loader:
                 # get activations (prune scores)
                 activations = self.get_activations(batch)
                 self.model.zero_grad()
@@ -400,7 +401,7 @@ class AutoCircuitGradScoresDetector(AutoCircuitDetector, StatisticalDetector):
         
         with patch_mode(self.model, self.patch_outs, batch_size=inputs.clean.shape[0]):
             logits = self.model(inputs.clean)[self.model.out_slice]
-            loss = -batch_avg_answer_diff(logits, inputs)
+            loss = -self.metric(logits, inputs)
             loss.backward()
         prune_scores = {
             dest_wrapper.module_name: dest_wrapper.patch_mask_batch.grad.detach().clone()
