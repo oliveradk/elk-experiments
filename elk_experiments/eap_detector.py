@@ -10,6 +10,8 @@ from transformer_lens import HookedTransformer
 from cupbearer import utils
 from cupbearer.detectors import ActivationBasedDetector
 
+from elk_experiments.utils import set_model
+
 from eap.eap_wrapper import EAP_clean_forward_hook, EAP_clean_backward_hook
 from eap.eap_graph import EAPGraph
 
@@ -37,13 +39,21 @@ def effect_prob_func(logits, effect_tokens=None, other_tokens=None, inputs=None)
     # out = logits[:, -1, effect_tokens].mean()
     return out
 
-def set_model(model: HookedTransformer):
-    model.set_use_hook_mlp_in(True)
-    model.set_use_split_qkv_input(True)
-    model.set_use_attn_result(True)
-    model.eval()
-    for param in model.parameters():
-        param.requires_grad = False
+
+def compute_valid_edge_mask(graph: Graph):
+    valid_edge_mask = np.zeros((len(graph.upstream_nodes), len(graph.downstream_nodes)), dtype=bool)
+    for hook in graph.downstream_hooks:
+        layer, hook_type = hook.split(".")[1:3]
+        hook_slice = graph.get_hook_slice(hook)
+        if hook_type == "hook_mlp_in":
+            slice_prev_upstream = graph.upstream_nodes_before_mlp_layer[int(layer)]
+        # elif hook_type == "hook_resid_post":
+        #     slice_prev_upstream = graph.upstream_nodes_before_layer[int(layer)+1]
+        else:
+            slice_prev_upstream = graph.upstream_nodes_before_layer[int(layer)]
+        valid_edge_mask[slice_prev_upstream , hook_slice] = 1
+    return valid_edge_mask
+
     
 
 
@@ -82,7 +92,7 @@ class EAPDetector(ActivationBasedDetector, ABC):
                 for upstream_node in self.graph.upstream_nodes]
             )
         # valid edge mask
-        valid_edge_mask = np.apply_along_axis(valid_edge, 2, self.edge_names_arr)
+        valid_edge_mask = compute_valid_edge_mask(self.graph)
         # edge filter mask
         edge_filter_mask = np.apply_along_axis(self.edge_filter, 2, self.edge_names_arr)
 

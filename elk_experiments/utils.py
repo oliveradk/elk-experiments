@@ -5,6 +5,8 @@ from matplotlib import pyplot as plt
 
 import torch
 
+from transformer_lens import HookedTransformer
+
 from cupbearer import tasks, detectors, scripts
 from cupbearer.detectors.anomaly_detector import AnomalyDetector
 from cupbearer.detectors.activation_based import ActivationCache
@@ -12,6 +14,14 @@ from cupbearer.utils import SUFFIX
 
 from eap.eap_graph import EAPGraph 
 from eap.eap_wrapper import EAP
+
+def set_model(model: HookedTransformer):
+    model.set_use_hook_mlp_in(True)
+    model.set_use_split_qkv_input(True)
+    model.set_use_attn_result(True)
+    model.eval()
+    for param in model.parameters():
+        param.requires_grad = False
 
 
 def train_detector_cache(
@@ -100,3 +110,9 @@ def repo_path_to_abs_path(path: str) -> Path:
     """
     repo_abs_path = Path(__file__).parent.parent.absolute()
     return repo_abs_path / path
+
+def prod(x):
+    cum_prod = 1 
+    for i in x:
+        cum_prod *= i
+    return cum_prod
