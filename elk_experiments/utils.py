@@ -15,13 +15,14 @@ from cupbearer.utils import SUFFIX
 from eap.eap_graph import EAPGraph 
 from eap.eap_wrapper import EAP
 
-def set_model(model: HookedTransformer):
+def set_model(model: HookedTransformer, disbale_grad: bool = True):
     model.set_use_hook_mlp_in(True)
     model.set_use_split_qkv_input(True)
     model.set_use_attn_result(True)
     model.eval()
-    for param in model.parameters():
-        param.requires_grad = False
+    if disbale_grad:
+        for param in model.parameters():
+            param.requires_grad = False
 
 
 def train_detector_cache(
