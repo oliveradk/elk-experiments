@@ -400,8 +400,8 @@ class AutoCircuitGradScoresDetector(AutoCircuitDetector, StatisticalDetector):
             raise RuntimeError("Model must be in train_mask_mode to compute activations")
         
         with patch_mode(self.model, self.patch_outs, batch_size=inputs.clean.shape[0]):
-            logits = self.model(inputs.clean)[self.model.out_slice]
-            loss = -self.metric(logits, inputs)
+            logits = self.model(inputs.clean)
+            loss = -self.metric(logits, inputs=inputs)
             loss.backward()
         prune_scores = {
             dest_wrapper.module_name: dest_wrapper.patch_mask_batch.grad.detach().clone()
