@@ -31,16 +31,13 @@ def effect_prob_func(logits, effect_tokens=None, other_tokens=None, inputs=None)
     assert effect_tokens is not None
     # Sum over vocab and batch dim (for now we're just computing attribution values, we'll deal with per data instance later)
     last_logits = logits[:, -1, :]
-    out = last_logits[:, effect_tokens].mean(dim=-1)
+    out = last_logits[:, effect_tokens].sum(dim=-1)
     if other_tokens is not None:
-        out -= last_logits[:, other_tokens].mean(dim=-1)
-    print(out)
-    out = out.sum() # mean over batch
-    # out = logits[:, -1, effect_tokens].mean()
+        out -= last_logits[:, other_tokens].sum(dim=-1)
     return out
 
 
-def compute_valid_edge_mask(graph: Graph):
+def compute_valid_edge_mask(graph: EAPGraph):
     valid_edge_mask = np.zeros((len(graph.upstream_nodes), len(graph.downstream_nodes)), dtype=bool)
     for hook in graph.downstream_hooks:
         layer, hook_type = hook.split(".")[1:3]
