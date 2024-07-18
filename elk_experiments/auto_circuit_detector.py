@@ -25,66 +25,12 @@ from auto_circuit.utils.patch_wrapper import PatchWrapperImpl
 from auto_circuit.utils.misc import module_by_name
 
 from elk_experiments.utils import set_model
-
-def make_prompt_dataset(data, effect_tokens, vocab_size):
-    clean_prompts = [x[0] for x in data]
-    answers = [effect_tokens] * len(clean_prompts)
-    wrong_answers = [list(set(range(vocab_size)) - set(answer)) for answer in answers]
-    
-    # put into torch tensors
-    clean_prompts = torch.stack(clean_prompts, dim=0)
-    corrupt_prompts = torch.stack([torch.zeros_like(clean_prompts[0], dtype=int)] * len(clean_prompts), dim=0)
-    answers = [torch.tensor(answer, dtype=int) for answer in answers]
-    wrong_answers= [torch.tensor(answer, dtype=int) for answer in wrong_answers]
-
-    return PromptDataset(clean_prompts, corrupt_prompts, answers, wrong_answers)
-
-def make_mixed_prompt_dataloader(dataset: MixedData, effect_tokens, model, batch_size):
-    normal_dataset = make_prompt_dataset(dataset.normal_data, effect_tokens, model.tokenizer.vocab_size)
-    anomalous_dataset = make_prompt_dataset(dataset.anomalous_data, effect_tokens, model.tokenizer.vocab_size)
-    prompt_dataset = MixedData(normal_dataset, anomalous_dataset, dataset.normal_weight, dataset.return_anomaly_labels)
-    seq_len = normal_dataset.clean_prompts.size(1)
-    dataloader = PromptDataLoader(
-        prompt_dataset,
-        seq_len=seq_len,
-        diverge_idx=0,
-        batch_size=batch_size,
-        shuffle=False, 
-        collate_fn=collate_fn
-    )
-    return dataloader
-
-def make_prompt_data_loader(dataset, effect_tokens, model, batch_size):
-    prompt_dataset = make_prompt_dataset(dataset, effect_tokens, model.tokenizer.vocab_size)
-    seq_len = prompt_dataset.clean_prompts.size(1)
-    dataloader = PromptDataLoader(
-        prompt_dataset,
-        seq_len=seq_len,
-        diverge_idx=0,
-        batch_size=batch_size,
-        shuffle=False
-    )
-    return dataloader
+from elk_experiments.auto_circuit_utils import (
+    make_prompt_data_loader,
+    make_mixed_prompt_dataloader,
+)
 
 
-
-def collate_fn(batch: List[Tuple[PromptPair, int]]) -> Tuple[PromptPairBatch, torch.Tensor]:
-    clean = torch.stack([p.clean for p, y in batch])
-    corrupt = torch.stack([p.corrupt for p, y in batch])
-    labels = torch.tensor([y for p, y in batch], dtype=torch.int)
-    if all([p.answers.shape == batch[0][0].answers.shape for p, y in batch]):
-        answers = torch.stack([p.answers for p, y in batch])
-    else:  # Sometimes each prompt has a different number of answers
-        answers = [p.answers for p, y in batch]
-    if all([p.wrong_answers.shape == batch[0][0].wrong_answers.shape for p, y in batch]):
-        wrong_answers = torch.stack([p.wrong_answers for p, y in batch])
-    else:  # Sometimes each prompt has a different number of wrong answers
-        wrong_answers = [p.wrong_answers for p, y in batch]
-    key = hash((str(clean.tolist()), str(corrupt.tolist())))
-
-    diverge_idxs = (~(clean == corrupt)).int().argmax(dim=1)
-    batch_dvrg_idx: int = int(diverge_idxs.min().item())
-    return PromptPairBatch(key, batch_dvrg_idx, clean, corrupt, answers, wrong_answers), labels
 
 
 class AutoCircuitDetector(AnomalyDetector):

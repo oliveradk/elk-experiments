@@ -90,3 +90,138 @@ def sorted_scores(scores: PruneScores, model: PatchableModel):
                 score_thruple.append((src_name, dest_name, score[i, j]))
     score_thruple.sort(key=lambda x: abs(x[2]), reverse=True)
     return score_thruple
+
+
+from typing import Dict, List, Tuple
+import math
+
+import torch as t
+from torch.nn.functional import log_softmax
+
+from auto_circuit.data import PromptDataLoader
+from auto_circuit.types import BatchKey, CircuitOutputs, Measurements
+from auto_circuit.utils.custom_tqdm import tqdm
+from auto_circuit.utils.patchable_model import PatchableModel
+from auto_circuit.utils.tensor_ops import multibatch_kl_div
+
+def log_answer_dist(logits, answers: torch.Tensor):
+    probs = logits.softmax(dim=-1)
+    answer_prob = torch.gather(probs, 1, answers).sum(dim=-1)
+    answer_dist = torch.stack([answer_prob, 1 - answer_prob], dim=1)
+    answer_log_dist = answer_dist.log()
+    return answer_log_dist
+
+def measure_kl_div(
+    model: PatchableModel,
+    dataloader: PromptDataLoader,
+    circuit_outs: CircuitOutputs,
+    compare_to_clean: bool = True,
+    over_vals: bool = False, 
+) -> List[Tuple[int, float, torch.Tensor]]:
+    """
+    Average KL divergence between the full model and the circuits.
+
+    Args:
+        model: The model on which `circuit_outs` was calculated.
+        dataloader: The dataloader on which the `circuit_outs` was calculated.
+        circuit_outs: The outputs of the ablated model for each circuit size.
+        compare_to_clean: Whether to compare the circuit output to the full model on the
+            clean (`True`) or corrupt (`False`) prompt.
+        over_vals: Whether to take KL over [answer, wrong_answer] or entire token distribution
+
+    Returns:
+        A list of tuples, where the first element is the number of edges pruned and the
+            second element is the average KL divergence for that number of edges.
+    """
+    circuit_kl_divs: Measurements = []
+    default_logprobs: Dict[BatchKey, t.Tensor] = {}
+    with t.inference_mode():
+        for batch in dataloader:
+            default_batch = batch.clean if compare_to_clean else batch.corrupt
+            logits = model(default_batch)[model.out_slice]
+            default_logprobs[batch.key] = log_softmax(logits, dim=-1) if not over_vals else log_answer_dist(logits, batch.answers)
+
+    for edge_count, circuit_out in (pruned_out_pbar := tqdm(circuit_outs.items())):
+        pruned_out_pbar.set_description_str(f"KL Div for {edge_count} edges")
+        circuit_logprob_list: List[t.Tensor] = []
+        default_logprob_list: List[t.Tensor] = []
+        for batch in dataloader:
+            circuit_logprob_list.append(log_softmax(circuit_out[batch.key], dim=-1) if not over_vals else log_answer_dist(circuit_out[batch.key], batch.answers))
+            default_logprob_list.append(default_logprobs[batch.key])
+        
+        input_logprobs = t.cat(circuit_logprob_list)
+        target_logprobs = t.cat(default_logprob_list)
+        n_batch = math.prod(input_logprobs.shape[:-1])
+        kl_instance = torch.nn.functional.kl_div( 
+            input_logprobs,
+            target_logprobs,
+            reduction="none",
+            log_target=True,
+        )
+        kl_instance = kl_instance.sum(dim=-1) # sum over "clases"
+        kl = kl_instance.sum() / n_batch
+        # kl = multibatch_kl_div(input_logprobs, target_logprobs)
+       
+
+        # Numerical errors can cause tiny negative values in KL divergence
+        circuit_kl_divs.append((edge_count, max(kl.item(), 0), torch.clip(kl_instance, 0, None).tolist()))
+    return circuit_kl_divs
+
+
+def plot_attribution_and_kl_div(
+        attribution_scores, 
+        kl_divs: List[Tuple[int, float, List[float]]],
+        knee, 
+        title, 
+        plot_interval=False,
+        kl_divs_anom=None,
+):
+    # plot attribution scores and kl_divs
+    fig, ax1 = plt.subplots()
+
+    lines = []
+    # plot attribution scores
+    color = 'tab:red'
+    ax1.set_xlabel('edge')
+    ax1.set_ylabel('attribution score', color=color)
+    attrib_line = ax1.plot(attribution_scores, color=color)
+    lines.append((attrib_line[0], 'attrib'))
+    ax1.tick_params(axis='y', labelcolor=color)
+
+    # plot kl_divs
+    xvals, y_vals, individual_kl_divs = zip(*kl_divs)
+    percentile_95 = [np.percentile(kl, 95) for kl in individual_kl_divs]
+    percentile_5 = [np.percentile(kl, 5) for kl in individual_kl_divs]
+    xvals = [model.n_edges - x for x in xvals]
+    ax2 = ax1.twinx()
+    color = 'tab:blue'
+    ax2.set_ylabel('kl_div', color=color)
+    
+    kl_line = ax2.plot(xvals, y_vals, color=color)
+    if plot_interval:
+        ax2.fill_between(xvals, percentile_5, percentile_95, color=color, alpha=0.2)
+    lines.append((kl_line[0], 'kl_div'))
+    ax2.tick_params(axis='y', labelcolor=color)
+
+    # plot anomalous kl_divs if present 
+    if kl_divs_anom:
+        xvals, y_vals, individual_kl_divs = zip(*kl_divs_anom)
+        percentile_95 = [np.percentile(kl, 95) for kl in individual_kl_divs]
+        percentile_5 = [np.percentile(kl, 5) for kl in individual_kl_divs]
+        xvals = [model.n_edges - x for x in xvals]
+        color = 'tab:green'
+        kl_anom_line = ax2.plot(xvals, y_vals, color=color)
+        if plot_interval:
+            ax2.fill_between(xvals, percentile_5, percentile_95, color=color, alpha=0.2)
+        lines.append((kl_anom_line[0], 'kl_div_anom'))
+
+    # plot knee 
+    knee_line = ax1.axvline(x=knee, color='grey', linestyle=':', label='knee')
+    lines.append((knee_line, 'knee'))
+
+    # legend
+    lines, labels = zip(*lines)
+    fig.legend(lines, labels, loc='upper left', bbox_to_anchor=(0.15, 0.85))
+
+    # title 
+    plt.title(f"Attribution scores and KLDivs {title}")
