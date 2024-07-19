@@ -30,6 +30,7 @@ huggingface-hub = "<=0.22.2"
 transformer-lens = {path = "TransformerLens", develop = true}
 auto-circuit = {path = "auto-circuit", develop = true}
 kneed = "^0.8.5"
+evaluate = "^0.4.2"
 
 
 [build-system]
