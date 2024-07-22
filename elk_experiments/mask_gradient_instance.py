@@ -75,46 +75,45 @@ def mask_gradient_instance_prune_scores(
 
     # store prune score batches 
     prune_scores: Dict[str, Dict[BatchKey, t.Tensor]] = defaultdict(dict)
-    with set_mask_batch_size(model, dataloader.batch_size):
-        with train_mask_mode(model):
-            for batch in tqdm(dataloader, desc="Batch"):
-                # We set the masks within the batch loop to accumulate the instance gradients
-                for sample in (ig_pbar := tqdm(range((integrated_grad_samples or 0) + 1))):
-                    ig_pbar.set_description_str(f"Sample: {sample}")
-                    # Interpolate the mask value if integrating gradients. Else set the value.
-                    if integrated_grad_samples is not None:
-                        set_all_masks(model, val=sample / integrated_grad_samples)
+    with set_mask_batch_size(model, dataloader.batch_size), train_mask_mode(model):
+        for batch in tqdm(dataloader, desc="Batch"):
+            # We set the masks within the batch loop to accumulate the instance gradients
+            for sample in (ig_pbar := tqdm(range((integrated_grad_samples or 0) + 1))):
+                ig_pbar.set_description_str(f"Sample: {sample}")
+                # Interpolate the mask value if integrating gradients. Else set the value.
+                if integrated_grad_samples is not None:
+                    set_all_masks(model, val=sample / integrated_grad_samples)
+                else:
+                    assert mask_val is not None and integrated_grad_samples is None
+                    set_all_masks(model, val=mask_val)
+
+                patch_src_outs = src_outs[batch.key].clone().detach()
+                with patch_mode(model, patch_src_outs):
+                    logits = model(batch.clean)[out_slice]
+                    if grad_function == "logit":
+                        token_vals = logits
+                    elif grad_function == "prob":
+                        token_vals = t.softmax(logits, dim=-1)
+                    elif grad_function == "logprob":
+                        token_vals = log_softmax(logits, dim=-1)
+                    elif grad_function == "logit_exp":
+                        numerator = t.exp(logits)
+                        denominator = numerator.sum(dim=-1, keepdim=True)
+                        token_vals = numerator / denominator.detach()
                     else:
-                        assert mask_val is not None and integrated_grad_samples is None
-                        set_all_masks(model, val=mask_val)
+                        raise ValueError(f"Unknown grad_function: {grad_function}")
 
-                    patch_src_outs = src_outs[batch.key].clone().detach()
-                    with patch_mode(model, patch_src_outs):
-                        logits = model(batch.clean)[out_slice]
-                        if grad_function == "logit":
-                            token_vals = logits
-                        elif grad_function == "prob":
-                            token_vals = t.softmax(logits, dim=-1)
-                        elif grad_function == "logprob":
-                            token_vals = log_softmax(logits, dim=-1)
-                        elif grad_function == "logit_exp":
-                            numerator = t.exp(logits)
-                            denominator = numerator.sum(dim=-1, keepdim=True)
-                            token_vals = numerator / denominator.detach()
-                        else:
-                            raise ValueError(f"Unknown grad_function: {grad_function}")
+                    if answer_function == "avg_diff":
+                        loss = -batch_avg_answer_diff(token_vals, batch)
+                    elif answer_function == "avg_val":
+                        loss = -batch_avg_answer_val(token_vals, batch)
+                    elif answer_function == "mse":
+                        loss = t.nn.functional.mse_loss(token_vals, batch.answers)
+                    else:
+                        raise ValueError(f"Unknown answer_function: {answer_function}")
 
-                        if answer_function == "avg_diff":
-                            loss = -batch_avg_answer_diff(token_vals, batch)
-                        elif answer_function == "avg_val":
-                            loss = -batch_avg_answer_val(token_vals, batch)
-                        elif answer_function == "mse":
-                            loss = t.nn.functional.mse_loss(token_vals, batch.answers)
-                        else:
-                            raise ValueError(f"Unknown answer_function: {answer_function}")
-
-                        loss.backward()
-                for dest_wrapper in model.dest_wrappers:
-                    prune_scores[dest_wrapper.module_name][batch.key] = dest_wrapper.patch_mask.grad.detach().clone()
-                model.zero_grad()
+                    loss.backward()
+            for dest_wrapper in model.dest_wrappers:
+                prune_scores[dest_wrapper.module_name][batch.key] = dest_wrapper.patch_mask.grad.detach().clone()
+            model.zero_grad()
     return prune_scores
