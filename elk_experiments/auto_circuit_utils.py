@@ -14,7 +14,7 @@ from auto_circuit.utils.misc import module_by_name
 
 
 
-def make_prompt_dataset(data, effect_tokens, vocab_size):
+def make_prompt_dataset(data, effect_tokens, vocab_size, device='cpu'):
     clean_prompts = [x[0] for x in data]
     answers = [effect_tokens] * len(clean_prompts)
     wrong_answers = [list(set(range(vocab_size)) - set(answer)) for answer in answers]
@@ -27,9 +27,9 @@ def make_prompt_dataset(data, effect_tokens, vocab_size):
 
     return PromptDataset(clean_prompts, corrupt_prompts, answers, wrong_answers)
 
-def make_mixed_prompt_dataloader(dataset: MixedData, effect_tokens, model, batch_size):
-    normal_dataset = make_prompt_dataset(dataset.normal_data, effect_tokens, model.tokenizer.vocab_size)
-    anomalous_dataset = make_prompt_dataset(dataset.anomalous_data, effect_tokens, model.tokenizer.vocab_size)
+def make_mixed_prompt_dataloader(dataset: MixedData, effect_tokens, model, batch_size, device='cpu'):
+    normal_dataset = make_prompt_dataset(dataset.normal_data, effect_tokens, model.tokenizer.vocab_size, device=device)
+    anomalous_dataset = make_prompt_dataset(dataset.anomalous_data, effect_tokens, model.tokenizer.vocab_size, device=device)
     prompt_dataset = MixedData(normal_dataset, anomalous_dataset, dataset.normal_weight, dataset.return_anomaly_labels)
     seq_len = normal_dataset.clean_prompts.size(1)
     dataloader = PromptDataLoader(
