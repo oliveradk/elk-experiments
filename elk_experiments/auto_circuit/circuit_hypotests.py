@@ -259,7 +259,6 @@ def plot_equivs_bar(results: dict[int, EquivResult]):
     fig, ax = plt.subplots(figsize=(20, 1))
     not_equivs = [results[edge_count][2] for edge_count in results.keys()]
     data = not_equivs
-    edge_counts = list(results.keys())
     # Create a custom colormap
     cmap = mcolors.ListedColormap(['green', 'red'])
     norm = mcolors.BoundaryNorm([0, 0.5, 1], cmap.N)
@@ -298,7 +297,7 @@ def plot_num_ablated_C_gt_M(results: dict[int, EquivResult]):
     return fig, ax
 
 
-def plot_circuit_and_model_scores(test_results: Dict[int, EquivResult]) -> Tuple[plt.Figure, plt.Axes]:
+def plot_circuit_and_model_scores(test_results: Dict[int, EquivResult], min_equiv: int) -> Tuple[plt.Figure, plt.Axes]:
     # mean and std of circ_scores 
     circ_scores_mean = {k: torch.mean(v.circ_scores).cpu() for k, v in test_results.items()}
     circ_scores_std = {k: torch.std(v.circ_scores).cpu() for k, v in test_results.items()}
@@ -321,11 +320,17 @@ def plot_circuit_and_model_scores(test_results: Dict[int, EquivResult]) -> Tuple
     # Set the positions of the bars
     x = np.arange(len(labels))
 
-    # Create the bars for circuit scores
-    rects1 = ax.bar(x, circ_means, yerr=circ_stds, capsize=5, label='Circuit Scores')
+    # Create the scatter plot for circuit scores
+    x = np.arange(len(labels))
+    ax.errorbar(x, circ_means, yerr=circ_stds, fmt='o', capsize=5, label='Circuit Scores')
+
 
     # Create a horizontal line for the constant model score
     ax.axhline(y=model_mean, color='r', linestyle='-', label=f'Model Score (Mean: {model_mean:.2f})')
+
+    # Create vertical lines for the minimum equivalent key
+    min_equiv_idx = next((i for i, k in enumerate(test_results) if k == min_equiv), None)
+    ax.axvline(x=min_equiv_idx, color='g', linestyle='--', label=f'Minimum Equivalent {min_equiv}')
 
     # Add shaded area for model score standard deviation
     ax.axhspan(model_mean - model_std, model_mean + model_std, alpha=0.2, color='r', 
@@ -335,20 +340,8 @@ def plot_circuit_and_model_scores(test_results: Dict[int, EquivResult]) -> Tuple
     ax.set_ylabel('Scores')
     ax.set_title('Circuit Scores vs Constant Model Score')
     ax.set_xticks(x)
-    ax.set_xticklabels(labels)
+    ax.set_xticklabels(labels, rotation='vertical', fontsize=8)
     ax.legend()
-
-    # Add value labels on top of each bar for circuit scores
-    def autolabel(rects):
-        for rect in rects:
-            height = rect.get_height()
-            ax.annotate(f'{height:.2f}',
-                        xy=(rect.get_x() + rect.get_width() / 2, height),
-                        xytext=(0, 3),  # 3 points vertical offset
-                        textcoords="offset points",
-                        ha='center', va='bottom')
-
-    autolabel(rects1)
 
 
     # Adjust layout and display the plot
