@@ -286,16 +286,62 @@ def plot_equivs_bar(results: dict[int, EquivResult]):
     return fig, ax
 
 
-def plot_num_ablated_C_gt_M(results: dict[int, EquivResult]):
-    fig, ax = plt.subplots(figsize=(12, 2))
-    edge_counts = list(results.keys())
-    num_ablated_C_gt_Ms = [results[edge_count][0] for edge_count in results.keys()]
-    ns = [results[edge_count][1] for edge_count in results.keys()]
-    ax.plot(edge_counts, num_ablated_C_gt_Ms)
-    ax.plot(edge_counts, ns)
-    ax.plot(edge_counts, [n/2 for n in ns])
-    return fig, ax
+import matplotlib.pyplot as plt
+import numpy as np
+from typing import Dict, Tuple, Any
 
+def plot_num_ablated_C_gt_M(results: Dict[int, Any], min_equiv: int, epsilon: float = 0.1) -> Tuple[plt.Figure, plt.Axes]:
+    if not 0 < epsilon <= 1:
+        raise ValueError("epsilon must be a float between 0 and 1")
+
+    # Extract data from results
+    edge_counts = list(results.keys())
+    num_ablated_C_gt_Ms = [results[edge_count][0] for edge_count in edge_counts]
+    ns = [results[edge_count][1] for edge_count in edge_counts]
+
+    # Set up the plot
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    # Set the positions of the bars
+    x = np.arange(len(edge_counts))
+    width = 0.6
+
+    # Create the bar plot for num_ablated_C_gt_M
+    ax.bar(x, num_ablated_C_gt_Ms, width, label='Num Ablated C > M', color='b', alpha=0.7)
+
+    # Create horizontal lines for N, N/2, and N/2 ± epsilon * N
+    ax.plot(x, ns, label='N', color='k', linestyle='-', linewidth=2)
+    ax.plot(x, [n/2 for n in ns], label='N/2', color='r', linestyle='--', linewidth=2)
+    ax.plot(x, [n/2 + epsilon*n for n in ns], label=f'N/2 + {epsilon}N', color='m', linestyle=':', linewidth=2)
+    ax.plot(x, [n/2 - epsilon*n for n in ns], label=f'N/2 - {epsilon}N', color='c', linestyle=':', linewidth=2)
+
+    # Fill the area between N/2 ± epsilon * N
+    ax.fill_between(x, 
+                    [n/2 - epsilon*n for n in ns], 
+                    [n/2 + epsilon*n for n in ns], 
+                    alpha=0.2, color='y', label=f'N/2 ± {epsilon}N range')
+
+    # plot vertical dotted line for min_equiv
+    min_equiv_k = next((i for i, k in enumerate(edge_counts) if k == min_equiv), None)
+    ax.axvline(x=min_equiv_k, color='g', linestyle='--', label=f'Minimum Equivalent ({min_equiv})')
+
+    # Customize the plot
+    ax.set_ylabel('Count')
+    ax.set_xlabel('Edge Count')
+    ax.set_title(f'Number of Ablated C > M')
+    ax.set_xticks(x)
+    ax.set_xticklabels(edge_counts, rotation='vertical', fontsize=8)
+    ax.legend()
+
+    # Add a grid for better readability
+    ax.grid(True, linestyle=':', alpha=0.7)
+
+    # Adjust y-axis to start from 0
+    ax.set_ylim(bottom=0)
+
+    # Adjust layout and display the plot
+    fig.tight_layout()
+    return fig, ax
 
 def plot_circuit_and_model_scores(test_results: Dict[int, EquivResult], min_equiv: int) -> Tuple[plt.Figure, plt.Axes]:
     # mean and std of circ_scores 
@@ -324,20 +370,24 @@ def plot_circuit_and_model_scores(test_results: Dict[int, EquivResult], min_equi
     x = np.arange(len(labels))
     ax.errorbar(x, circ_means, yerr=circ_stds, fmt='o', capsize=5, label='Circuit Scores')
 
+    # Create horizontal lines for N, N/2, and N/2 ± epsilon * N
+    ax.plot(x, [model_mean for _ in labels], label=f'Mean Score (Mean {model_mean:.2f})', color='r', linestyle='--', linewidth=2)
+    ax.plot(x, [model_mean + model_std for _ in labels], label=f'Mean + STD', color='m', linestyle=':', linewidth=2)
+    ax.plot(x, [model_mean - model_std for _ in labels], label=f'Mean - STD', color='c', linestyle=':', linewidth=2)
 
-    # Create a horizontal line for the constant model score
-    ax.axhline(y=model_mean, color='r', linestyle='-', label=f'Model Score (Mean: {model_mean:.2f})')
+    # Fill the area between N/2 ± epsilon * N
+    ax.fill_between(x, 
+                    [model_mean - model_std for _ in labels], 
+                    [model_mean + model_std for _ in labels], 
+                    alpha=0.2, color='y', label='Mean ± STD range')
 
     # Create vertical lines for the minimum equivalent key
     min_equiv_idx = next((i for i, k in enumerate(test_results) if k == min_equiv), None)
-    ax.axvline(x=min_equiv_idx, color='g', linestyle='--', label=f'Minimum Equivalent {min_equiv}')
-
-    # Add shaded area for model score standard deviation
-    ax.axhspan(model_mean - model_std, model_mean + model_std, alpha=0.2, color='r', 
-            label=f'Model Score Std Dev: ±{model_std:.2f}')
+    ax.axvline(x=min_equiv_idx, color='g', linestyle='--', label=f'Minimum Equivalent ({min_equiv})')
 
     # Customize the plot
     ax.set_ylabel('Scores')
+    ax.set_xlabel('Edge Count')
     ax.set_title('Circuit Scores vs Constant Model Score')
     ax.set_xticks(x)
     ax.set_xticklabels(labels, rotation='vertical', fontsize=8)
@@ -615,16 +665,20 @@ def plot_p_values(min_results: dict[Edge, MinResult], edges: list[Edge], edge_sc
     ax.set_title("p values for minimality test")
     return fig, ax
 
-def plot_edge_k(min_results: dict[Edge, MinResult], edges: list[Edge], edge_scores: dict[Edge, torch.Tensor]):
+def plot_edge_k(min_results: dict[Edge, MinResult], edges: list[Edge], edge_scores: dict[Edge, torch.Tensor], n: int, q_star: float):
     fig, ax = plt.subplots(figsize=(12, 2))
     ks = [min_results[edge][2] for edge in edges]
     neg_edge = [edge_scores[edge].cpu() < 0 for edge in edges]
     # scatter with blue as positive, red as negative
     ax.scatter(range(len(ks)), ks, c=neg_edge, cmap='coolwarm')
-    # horizontal line at 128 
-    ax.axhline(y=128, color='g', linestyle='-')
+    # horizontal line at  
+    ax.axhline(y=n // 2, color='g', linestyle='--', label=f"N / 2")
+    # horizeontal line at n * q_star
+    ax.axhline(y=n * q_star, color='r', linestyle='--', label=f"N x q* ({q_star})")
 
     ax.set_title("k for minimality test")
+
+    ax.legend()
     return fig, ax
 
 def plot_score_quantiles(
@@ -648,7 +702,7 @@ def plot_score_quantiles(
     median_infl = diff_infl.median().detach().cpu().numpy()
 
     # plot average diff with quantile ranges
-    fig, ax = plt.subplots(figsize=(12, 2))
+    fig, ax = plt.subplots(figsize=(12, 4))
     diffs = [torch.cat(min_results[edge][3]).mean().detach().cpu().numpy() for edge in edges]
     median_diffs = [torch.cat(min_results[edge][3]).median().detach().cpu().numpy() for edge in edges]
 
@@ -668,12 +722,12 @@ def plot_score_quantiles(
     ax.axhline(y=median_infl, color='orange', linestyle='-')
 
     # Add quantile inflation lines
-    ax.axhline(y=quantile_infl[0], linestyle='--',  zorder=2)
-    ax.axhline(y=quantile_infl[1], linestyle='--', zorder=2)
+    ax.axhline(y=quantile_infl[0], color='c', linestyle='--',  zorder=2, label=f'Inflated Quantile Range ({quantile_range[0]*100})')
+    ax.axhline(y=quantile_infl[1], color='m', linestyle='--', zorder=2, label=f'Inflated Quantile Range ({quantile_range[1]*100})')
 
     ax.set_yscale('log')
     ax.set_title(f"Score diff for minimality test (with {quantile_range[0]*100}-{quantile_range[1]*100} quantile ranges)")
-    ax.set_xlabel("Index")
+    ax.set_xlabel("Edges")
     ax.set_ylabel("Score Difference")
 
     # Add legend
