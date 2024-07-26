@@ -9,6 +9,7 @@ import torch as t
 from torch.nn.functional import log_softmax
 import matplotlib.pyplot as plt
 import numpy as np
+from transformer_lens import HookedTransformer
 
 from cupbearer.data import MixedData
 
@@ -247,7 +248,7 @@ def flat_prune_scores(prune_scores: PruneScores, per_inst: bool=False) -> t.Tens
     return t.cat([ps.flatten(start_dim) for _, ps in prune_scores.items()], cat_dim)
 
 
-def desc_prune_scores(prune_scores: PruneScores, per_inst: bool=False) -> t.Tensor:
+def desc_prune_scores(prune_scores: PruneScores, per_inst: bool=False, use_abs=True) -> t.Tensor:
     """
     Flatten the prune scores into a single, 1-dimensional tensor and sort them in
     descending order.
@@ -260,7 +261,34 @@ def desc_prune_scores(prune_scores: PruneScores, per_inst: bool=False) -> t.Tens
         The flattened and sorted prune scores.
     """
     prune_scores_flat = flat_prune_scores(prune_scores, per_inst=per_inst)
-    return prune_scores_flat.abs().sort(descending=True).values
+    if use_abs:
+        prune_scores_flat = prune_scores_flat.abs()
+    return prune_scores_flat.sort(descending=True).values
+
+def prune_scores_threshold(
+    prune_scores: PruneScores | t.Tensor, edge_count: int, use_abs: bool = True
+) -> t.Tensor:
+    """
+    Return the minimum absolute value of the top `edge_count` prune scores.
+    Supports passing in a pre-sorted tensor of prune scores to avoid re-sorting.
+
+    Args:
+        prune_scores: The prune scores to threshold.
+        edge_count: The number of edges that should be above the threshold.
+
+    Returns:
+        The threshold value.
+    """
+    if edge_count == 0:
+        return t.tensor(float("inf"))  # return the maximum value so no edges are pruned
+
+    if isinstance(prune_scores, t.Tensor):
+        assert prune_scores.ndim == 1
+        return prune_scores[edge_count - 1]
+    else:
+        return desc_prune_scores(prune_scores, use_abs=use_abs)[edge_count - 1]
+
+
 
 def expand_patch_src_out(patch_src_out: torch.Tensor, batch_size: int):
     return patch_src_out.expand(
@@ -277,6 +305,7 @@ def run_circuits(
     patch_type: PatchType = PatchType.EDGE_PATCH,
     ablation_type: AblationType = AblationType.RESAMPLE,
     reverse_clean_corrupt: bool = False,
+    use_abs: bool = True,
     render_graph: bool = False,
     render_score_threshold: bool = False,
     render_file_path: Optional[str] = None,
@@ -307,11 +336,11 @@ def run_circuits(
     if per_inst: 
         prune_scores_all: Dict[BatchKey, PruneScores] = prune_scores
         desc_ps_all: Dict[BatchKey: torch.Tensor] = {
-            batch_key: desc_prune_scores(ps, per_inst=per_inst) 
+            batch_key: desc_prune_scores(ps, per_inst=per_inst, use_abs=use_abs) 
             for batch_key, ps in prune_scores_all.items()
         }
     else:
-        desc_ps: torch.Tensor = desc_prune_scores(prune_scores)
+        desc_ps: torch.Tensor = desc_prune_scores(prune_scores, use_abs=use_abs)
     # check if prune scores are instance specific (in which case we need to add the set_batch_size context)
   
     patch_src_outs: Optional[t.Tensor] = None
@@ -341,7 +370,7 @@ def run_circuits(
 
         if test_edge_counts is not None:
             assert per_inst is False # TODO: support
-            thresholds = [prune_scores_threshold(desc_ps, edge_count)
+            thresholds = [prune_scores_threshold(desc_ps, edge_count, use_abs=use_abs)
                           for edge_count in test_edge_counts]
         else: 
             assert thresholds is not None
@@ -359,11 +388,11 @@ def run_circuits(
                     assert isinstance(dest, PatchWrapper)
                     assert dest.is_dest and dest.patch_mask is not None
                     if patch_type == PatchType.EDGE_PATCH:
-                        dest.patch_mask.data = (patch_mask.abs() >= threshold).float()
+                        dest.patch_mask.data = (patch_mask.abs() if use_abs else patch_mask >= threshold).float()
                         patch_edge_count += dest.patch_mask.int().sum().item()
                     else:
                         assert patch_type == PatchType.TREE_PATCH
-                        dest.patch_mask.data = (patch_mask.abs() < threshold).float()
+                        dest.patch_mask.data = (patch_mask.abs() if use_abs else patch_mask < threshold).float()
                         patch_edge_count += (1 - dest.patch_mask.int()).sum().item()
                 with t.inference_mode():
                     model_output = model(batch_input)[model.out_slice]
@@ -378,3 +407,17 @@ def run_circuits(
                 )
     del patch_src_outs
     return circ_outs
+
+def load_tf_model(model_name: str):
+    model = HookedTransformer.from_pretrained(
+        model_name,
+        fold_ln=True,
+        center_writing_weights=True,
+        center_unembed=True
+    )
+    model.cfg.use_attn_result = True
+    model.cfg.use_attn_in = True
+    model.cfg.use_split_qkv_input = True
+    model.cfg.use_hook_mlp_in = True
+    model.eval()
+    return model
