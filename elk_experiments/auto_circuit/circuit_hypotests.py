@@ -357,8 +357,8 @@ def plot_circuit_and_model_scores(test_results: Dict[int, EquivResult], min_equi
     circ_stds = list(circ_scores_std.values())
 
     # Assuming model_scores_mean and model_scores_std are constants
-    model_mean = next(iter(model_scores_mean.values()))  # Get the constant model mean
-    model_std = next(iter(model_scores_std.values()))  # Get the constant model std
+    model_mean = next(iter(model_scores_mean.values())).detach()  # Get the constant model mean
+    model_std = next(iter(model_scores_std.values())).detach()  # Get the constant model std
 
     # Set up the plot
     fig, ax = plt.subplots(figsize=(12, 6))
@@ -457,6 +457,7 @@ def create_paths(srcs: set[SrcNode], dests: set[DestNode], n_layers: int) -> lis
     return paths_edges
 
 def edges_from_mask(srcs: set[SrcNode], dests: set[DestNode], mask: Dict[str, torch.Tensor]) -> list[Edge]:
+    #TODO: fix for SAEs
     SRC_IDX_TO_NODE = {src.src_idx: src for src in srcs}
     DEST_MOD_AND_HEAD_TO_NODE = {(dest.module_name, dest.head_idx): dest for dest in dests}
     edges = []
