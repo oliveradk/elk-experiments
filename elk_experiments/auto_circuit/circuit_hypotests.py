@@ -110,7 +110,8 @@ def equiv_test(
     grad_function: GradFunc,
     answer_function: AnswerFunc,
     ablation_type: AblationType,
-    edge_counts: list[int],
+    edge_counts: Optional[list[int]] = None,
+    thresholds: Optional[list[float]] = None,
     use_abs: bool = True,
     model_out: Optional[Dict[BatchKey, torch.Tensor]] = None,
     full_model: Optional[torch.nn.Module] = None,
@@ -118,12 +119,13 @@ def equiv_test(
     alpha: float = 0.05,
     epsilon: float = 0.1,
 ) -> Dict[int, EquivResult]:
-    
+
     # circuit out
     circuit_outs = dict(run_circuits(
         model=model, 
         dataloader=dataloader,
         test_edge_counts=edge_counts,
+        thresholds=thresholds,
         prune_scores=attribution_scores,
         patch_type=PatchType.TREE_PATCH,
         ablation_type=ablation_type,
@@ -414,16 +416,18 @@ def plot_edge_scores_and_knees(edge_scores, kneedle_poly, kneedle_1d, min_equiv)
     ax.plot(edge_scores)
     # log axis 
     ax.set_yscale('log')
-    ax.axvline(kneedle_poly.knee, color='r', linestyle='--')
-    ax.axvline(kneedle_1d.knee, color='g', linestyle='--')
+    ax.axvline(kneedle_poly.knee, color='r', linestyle='--', label="knee poly")
+    ax.axvline(kneedle_1d.knee, color='g', linestyle='--', label="knee 1d")
     # plot min_equiv 
-    ax.axvline(len(edge_scores) - min_equiv, color='b', linestyle='--')
+    ax.axvline(len(edge_scores) - min_equiv, color='b', linestyle='--', label="min equiv")
+    ax.legend()
     return fig, ax
 
 
 
 
 def create_paths(srcs: set[SrcNode], dests: set[DestNode], n_layers: int) -> list[list[Edge]]:
+    #TODO: create paths from src to dest through different to
     srcs_by_layer = {layer: {} for layer in range(1, n_layers+1)}
     for scr in srcs:
         if scr.layer < 1:
@@ -456,20 +460,35 @@ def create_paths(srcs: set[SrcNode], dests: set[DestNode], n_layers: int) -> lis
         paths_edges.append(path_edges)
     return paths_edges
 
-def edges_from_mask(srcs: set[SrcNode], dests: set[DestNode], mask: Dict[str, torch.Tensor]) -> list[Edge]:
+def edges_from_mask(srcs: set[SrcNode], dests: set[DestNode], mask: Dict[str, torch.Tensor], token: bool=False) -> list[Edge]:
     #TODO: fix for SAEs
     SRC_IDX_TO_NODE = {src.src_idx: src for src in srcs}
     DEST_MOD_AND_HEAD_TO_NODE = {(dest.module_name, dest.head_idx): dest for dest in dests}
     edges = []
     for mod_name, mask in mask.items():
         for idx in mask.nonzero():
+            # src idx 
             if len(idx) == 1:
-                dest_node = DEST_MOD_AND_HEAD_TO_NODE[(mod_name, None)]
-                src_node = SRC_IDX_TO_NODE[idx.item()]
-            else:
-                dest_node = DEST_MOD_AND_HEAD_TO_NODE[(mod_name, idx[0].item())]
-                src_node = SRC_IDX_TO_NODE[idx[1].item()]
-            edges.append(Edge(src=src_node, dest=dest_node))
+                assert not token
+                src_idx = idx.item() 
+                dest_idx = None
+                seq_idx = None
+            elif len(idx) == 2 and not token: 
+                src_idx = idx[1].item()
+                dest_idx = idx[0].item()
+                seq_idx = None
+            elif len(idx) == 2 and token:
+                src_idx = idx[1].item()
+                dest_idx = None
+                seq_idx = idx[0].item()
+            else: 
+                assert token and len(idx) == 3
+                src_idx = idx[2].item()
+                dest_idx = idx[1].item()
+                seq_idx = idx[0].item()
+            dest_node = DEST_MOD_AND_HEAD_TO_NODE[(mod_name, dest_idx)]
+            src_node = SRC_IDX_TO_NODE[src_idx]
+            edges.append(Edge(src=src_node, dest=dest_node, seq_idx=seq_idx))
     return edges
 
 def make_complement_paths(
@@ -488,11 +507,13 @@ def make_complement_paths(
 def get_edge_idx(edge: Edge):
     if edge.dest.name == "Resid End":
         return (edge.src.src_idx,)
-    return (edge.dest.head_idx, edge.src.src_idx)
+    return (edge.seq_idx, edge.dest.head_idx, edge.src.src_idx)
 
 
 def set_score(edge: Edge, scores, value, batch_idx: Optional[int] = None):
     idx = get_edge_idx(edge)
+    if idx[0] is None:
+        idx = idx[1:]
     if batch_idx is not None:
         idx = (batch_idx,) + idx
     scores[edge.dest.module_name][idx] = value
