@@ -511,7 +511,7 @@ def get_edge_idx(edge: Edge, tokens=False):
     elif edge.dest.name.startswith("MLP"):
         idx = (edge.src.src_idx,)
     else:
-        idx = (edge.src.src_idx, edge.dest.head_idx)
+        idx = (edge.dest.head_idx, edge.src.src_idx)
     if tokens:
         idx = (edge.seq_idx,) + idx
     return idx
@@ -649,7 +649,7 @@ def minimality_test_edge(
     for batch_key, paths in sampled_paths.items():
         for batch_idx, path in enumerate(paths):
             edge_to_ablate = random.choice(path)
-            set_score(edge_to_ablate, prune_scores_ablated_paths[batch_key], 0.0, batch_idx)
+            set_score(edge_to_ablate, prune_scores_ablated_paths[batch_key], 0.0, batch_idx, tokens=tokens)
     circuit_out_ablated_paths = join_values(run_circuits(
         model=model, 
         dataloader=dataloader,
