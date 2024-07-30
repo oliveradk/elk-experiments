@@ -576,6 +576,7 @@ def minimality_test( #TODO: seperate infalted circuit seperate from dataset, get
             dataloader=dataloader,
             attribution_scores=attribution_scores,
             edge=edge,
+            edges=edges,
             filtered_paths=filtered_paths,
             ablation_type=ablation_type,
             threshold=threshold,
@@ -593,6 +594,7 @@ def minimality_test_edge(
     dataloader: PromptDataLoader,
     attribution_scores: torch.Tensor,
     edge: Edge,
+    edges: list[Edge],
     filtered_paths: list[list[Edge]],
     ablation_type: AblationType,
     threshold: float,
@@ -619,7 +621,6 @@ def minimality_test_edge(
         use_abs=use_abs
     ))
 
-    # TODO: go back over this code, see what's up
     # sample random paths, inflate prune scores, and run
     sampled_paths: Dict[BatchKey, list[Edge]] = {}
     prune_scores_inflated: Dict[BatchKey, PruneScores] = {}
@@ -644,11 +645,12 @@ def minimality_test_edge(
         use_abs=use_abs
     ))
 
+    edges_set = set(edges)
     # ablate random edges in paths and run 
     prune_scores_ablated_paths = prune_scores_inflated
     for batch_key, paths in sampled_paths.items():
         for batch_idx, path in enumerate(paths):
-            edge_to_ablate = random.choice(path)
+            edge_to_ablate = random.choice(set(path) - edges_set) 
             set_score(edge_to_ablate, prune_scores_ablated_paths[batch_key], 0.0, batch_idx, tokens=tokens)
     circuit_out_ablated_paths = join_values(run_circuits(
         model=model, 
