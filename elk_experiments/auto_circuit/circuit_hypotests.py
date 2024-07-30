@@ -504,16 +504,25 @@ def make_complement_paths(
     ]
     return complement_paths
 
-def get_edge_idx(edge: Edge):
+def get_edge_idx(edge: Edge, tokens=False):
+    # TODO: make backwards compatible
     if edge.dest.name == "Resid End":
-        return (edge.src.src_idx,)
-    return (edge.seq_idx, edge.dest.head_idx, edge.src.src_idx)
+        idx = (edge.src.src_idx,)
+    elif edge.dest.name.startswith("MLP"):
+        idx = (edge.src.src_idx,)
+    else:
+        idx = (edge.src.src_idx, edge.dest.head_idx)
+    if tokens:
+        idx = (edge.seq_idx,) + idx
+    return idx
 
 
-def set_score(edge: Edge, scores, value, batch_idx: Optional[int] = None):
-    idx = get_edge_idx(edge)
-    if idx[0] is None:
-        idx = idx[1:]
+def set_score(edge: Edge, scores, value, batch_idx: Optional[int] = None, tokens: bool = False):
+    idx = get_edge_idx(edge, tokens=tokens)
+    # remove nones
+    idx = tuple(filter(lambda x: x is not None, idx))
+    # if idx[0] is None:
+    #     idx = idx[1:]
     if batch_idx is not None:
         idx = (batch_idx,) + idx
     scores[edge.dest.module_name][idx] = value
@@ -533,7 +542,7 @@ class MinResult(NamedTuple):
 def minimality_test( #TODO: seperate infalted circuit seperate from dataset, get higher n 
     model: PatchableModel,
     dataloader: PromptDataLoader,
-    attribution_scores: torch.Tensor,
+    attribution_scores: torch.Tensor | PruneScores,
     edges: list[Edge], 
     filtered_paths: list[list[Edge]],
     edge_count: int, 
@@ -543,6 +552,7 @@ def minimality_test( #TODO: seperate infalted circuit seperate from dataset, get
     circuit_out: Optional[CircuitOutputs] = None,
     threshold: Optional[float] = None,
     use_abs: bool = True,
+    tokens: bool = False,
     alpha: float = 0.05,
     q_star: float = 0.9,
 ) -> Dict[Edge, MinResult]:
@@ -572,6 +582,7 @@ def minimality_test( #TODO: seperate infalted circuit seperate from dataset, get
             grad_function=grad_function,
             answer_function=answer_function,
             circuit_out=circuit_out,
+            tokens=tokens,
             alpha=alpha / len(edges), # bonferroni correction
             q_star=q_star,
         )
@@ -588,6 +599,7 @@ def minimality_test_edge(
     grad_function: GradFunc,
     answer_function: AnswerFunc,
     use_abs: bool = True,  
+    tokens: bool = False,
     circuit_out: Optional[CircuitOutputs] = None,
     alpha: float = 0.05,
     q_star: float = 0.9,
@@ -595,7 +607,7 @@ def minimality_test_edge(
     
     # ablate edge and run 
     prune_scores_ablated = deepcopy(attribution_scores)
-    prune_scores_ablated[edge.dest.module_name][get_edge_idx(edge)] = 0.0
+    prune_scores_ablated[edge.dest.module_name][get_edge_idx(edge, tokens=tokens)] = 0.0
     circuit_out_ablated = join_values(run_circuits(
         model=model, 
         dataloader=dataloader,
@@ -607,6 +619,7 @@ def minimality_test_edge(
         use_abs=use_abs
     ))
 
+    # TODO: go back over this code, see what's up
     # sample random paths, inflate prune scores, and run
     sampled_paths: Dict[BatchKey, list[Edge]] = {}
     prune_scores_inflated: Dict[BatchKey, PruneScores] = {}
@@ -619,7 +632,7 @@ def minimality_test_edge(
     for batch_key, paths in sampled_paths.items():
         for batch_idx, path in enumerate(paths):
             for edge in path:
-                set_score(edge, prune_scores_inflated[batch_key], threshold+1, batch_idx=batch_idx)
+                set_score(edge, prune_scores_inflated[batch_key], threshold+1, batch_idx=batch_idx, tokens=tokens)
     circuit_out_inflated = join_values(run_circuits(
         model=model, 
         dataloader=dataloader,
