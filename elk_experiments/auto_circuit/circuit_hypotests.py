@@ -650,7 +650,7 @@ def minimality_test_edge(
     prune_scores_ablated_paths = prune_scores_inflated
     for batch_key, paths in sampled_paths.items():
         for batch_idx, path in enumerate(paths):
-            edge_to_ablate = random.choice(set(path) - edges_set) 
+            edge_to_ablate = random.choice(list(set(path) - edges_set)) 
             set_score(edge_to_ablate, prune_scores_ablated_paths[batch_key], 0.0, batch_idx, tokens=tokens)
     circuit_out_ablated_paths = join_values(run_circuits(
         model=model, 
