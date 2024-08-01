@@ -31,6 +31,7 @@ transformer-lens = {path = "TransformerLens", develop = true}
 auto-circuit = {path = "auto-circuit", develop = true}
 kneed = "^0.8.5"
 evaluate = "^0.4.2"
+circuitsvis = {path = "CircuitsVis/python", develop = true}
 
 
 [build-system]
