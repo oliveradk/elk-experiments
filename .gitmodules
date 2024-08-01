@@ -13,3 +13,6 @@
 [submodule "auto-circuit"]
 	path = auto-circuit
 	url = git@github.com:oliveradk/auto-circuit.git
+[submodule "CircuitsVis"]
+	path = CircuitsVis
+	url = git@github.com:oliveradk/CircuitsVis.git
