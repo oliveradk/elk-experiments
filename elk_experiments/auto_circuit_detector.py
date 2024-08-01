@@ -25,7 +25,7 @@ from auto_circuit.utils.patch_wrapper import PatchWrapperImpl
 from auto_circuit.utils.misc import module_by_name
 
 from elk_experiments.utils import set_model
-from elk_experiments.auto_circuit_utils import (
+from elk_experiments.auto_circuit.auto_circuit_utils import (
     make_prompt_data_loader,
     make_mixed_prompt_dataloader,
 )
