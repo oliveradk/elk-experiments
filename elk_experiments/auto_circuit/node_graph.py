@@ -32,7 +32,7 @@ def get_node_idx(node: DestNode) -> NodeIdx:
     return (node.layer, node.head_idx)
 
 
-def node_to_seq_node(node: Node, seq_idx: int) -> SeqNode:
+def node_to_seq_node(node: Node, seq_idx: int | None) -> SeqNode:
     return SeqNode(
         name=node.name,
         module_name=node.module_name,
@@ -53,11 +53,13 @@ class NodeGraph():
         srcs: list[SrcNode],
         dests: list[DestNode],
         edges: list[Edge],
+        token: bool = True
     ):
         self.srcs = srcs
         self.dests = dests
         self.edges = edges
-        self.last_seq_idx = max([edge.seq_idx for edge in edges])
+        self.token = token
+        self.last_seq_idx = max([edge.seq_idx for edge in edges]) if token else None
         self.max_layer = max([dest.layer for dest in dests])
 
         # dest and src idx to edges
@@ -81,7 +83,10 @@ class NodeGraph():
         start_node = next(src for src in self.srcs if src.name == "Resid Start")
         # construct dests to seq dests dict
         dests_to_seq_dests: dict[DestNode, list[SeqNode]] = {
-            dest: [node_to_seq_node(dest, seq_idx) for seq_idx in range(self.last_seq_idx + 1)]
+            dest: [
+                node_to_seq_node(dest, seq_idx) 
+                for seq_idx in (range(self.last_seq_idx + 1) if self.token else [None]) # if not token, one seq_node with seq_idx=None
+            ]
             for dest in list(self.dests) + [start_node]
         }
         # construct dest graph from resid end of last token, layer by layer, tracking path counts at each node
@@ -101,9 +106,9 @@ class NodeGraph():
                     # if dest is K, V 
                 # get downstream edges from dest
                 edges = self.edges_by_src_idx[get_node_idx(dest)]
-                if dest.name.endswith(("K", "V")):
+                if dest.name.endswith(("K", "V")) or not self.token:
                     # if dest.layer >= max_layer - 2 (last layer or two layers depending on whether attention and mlp are counted together)
-                    if dest.layer >= self.max_layer - 2:
+                    if dest.layer >= self.max_layer - 2 and self.token:
                         # convert edge dests to seq nodes with seq_idx = last_seq_idx
                         child_dests = [dests_to_seq_dests[edge.dest][self.last_seq_idx] for edge in edges]
                     else:
@@ -129,7 +134,8 @@ class SampleType(Enum):
 # sample path
 def sample_path(node_graph: NodeGraph, sample_type: SampleType=SampleType.WALK) -> list[SeqNode]:
     path = []
-    current = random.choice(node_graph.nodes[-node_graph.last_seq_idx:]) # resid starts
+    start_slice = slice(-node_graph.last_seq_idx if node_graph.token else -1, None)
+    current = random.choice(node_graph.nodes[start_slice]) # resid starts #TODO: fix
     assert current.name == "Resid Start"
     path.append(current)
 

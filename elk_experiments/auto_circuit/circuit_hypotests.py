@@ -523,6 +523,7 @@ def minimality_test( #TODO: seperate infalted circuit seperate from dataset, get
     tokens: bool = False,
     alpha: float = 0.05,
     q_star: float = 0.9,
+    stop_if_failed: bool = False,
 ) -> Dict[Edge, MinResult]:
     if circuit_out is None:
         circuit_out = dict(next(iter(run_circuits(
@@ -571,6 +572,8 @@ def minimality_test( #TODO: seperate infalted circuit seperate from dataset, get
             alpha=alpha / len(edges), # bonferroni correction
             q_star=q_star,
         )
+        if stop_if_failed and test_results[edge].not_minimal:
+            break 
     return test_results
 
 def minimality_test_edge(
