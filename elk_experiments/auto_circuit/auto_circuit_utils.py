@@ -17,7 +17,7 @@ from auto_circuit.types import BatchKey, CircuitOutputs, Measurements, PatchWrap
 from auto_circuit.utils.custom_tqdm import tqdm
 from auto_circuit.utils.patchable_model import PatchableModel
 from auto_circuit.data import PromptDataset, PromptDataLoader, PromptPair, PromptPairBatch
-from auto_circuit.types import AblationType, PatchType, PruneScores, CircuitOutputs
+from auto_circuit.types import AblationType, PatchType, PruneScores, CircuitOutputs, Edge
 from auto_circuit.utils.graph_utils import patch_mode, set_mask_batch_size
 from auto_circuit.utils.ablation_activations import src_ablations
 from auto_circuit.utils.tensor_ops import prune_scores_threshold
@@ -299,13 +299,14 @@ def expand_patch_src_out(patch_src_out: torch.Tensor, batch_size: int):
 def run_circuits(
     model: PatchableModel,
     dataloader: PromptDataLoader,
-    prune_scores: Union[PruneScores, Dict[BatchKey, PruneScores]],
-    test_edge_counts: Optional[List[int]] = None,
+    prune_scores: Optional[Union[PruneScores, Dict[BatchKey, PruneScores]]] = None,
     thresholds: Optional[List[float]] = None,
+    edges: Optional[List[Edge]] = None, # compliment of circuit
     patch_type: PatchType = PatchType.EDGE_PATCH,
     ablation_type: AblationType = AblationType.RESAMPLE,
     reverse_clean_corrupt: bool = False,
     use_abs: bool = True,
+    test_edge_counts: Optional[List[int]] = None,
     render_graph: bool = False,
     render_score_threshold: bool = False,
     render_file_path: Optional[str] = None,
@@ -331,6 +332,13 @@ def run_circuits(
             dictionary mapping from [`BatchKey`s][auto_circuit.types.BatchKey] to output
             tensors.
     """
+    # must define method for constructing circuitt 
+    if prune_scores is not None:
+        assert edges is None
+    else:
+        assert prune_scores is None
+        assert patch_type == PatchType.EDGE_PATCH #must use edge patch for patching edges 
+
     per_inst = isinstance(next(iter(prune_scores.values())), dict)
     circ_outs: CircuitOutputs = defaultdict(dict)
     if per_inst: 
@@ -377,23 +385,26 @@ def run_circuits(
         
         assert patch_src_outs is not None
         with ExitStack() as stack:
-            stack.enter_context(patch_mode(model, patch_src_outs))
+            stack.enter_context(patch_mode(model, patch_src_outs, edges=edges))
             if per_inst:
                 stack.enter_context(set_mask_batch_size(model, batch_input.size(0)))
             for threshold in tqdm(thresholds):
-                # When prune_scores are tied we can't prune exactly edge_count edges
-                patch_edge_count = 0
-                for mod_name, patch_mask in prune_scores.items():
-                    dest = module_by_name(model, mod_name)
-                    assert isinstance(dest, PatchWrapper)
-                    assert dest.is_dest and dest.patch_mask is not None
-                    if patch_type == PatchType.EDGE_PATCH:
-                        dest.patch_mask.data = (patch_mask.abs() if use_abs else patch_mask >= threshold).float()
-                        patch_edge_count += dest.patch_mask.int().sum().item()
-                    else:
-                        assert patch_type == PatchType.TREE_PATCH
-                        dest.patch_mask.data = (patch_mask.abs() if use_abs else patch_mask < threshold).float()
-                        patch_edge_count += (1 - dest.patch_mask.int()).sum().item()
+                if prune_scores is not None:
+                    # When prune_scores are tied we can't prune exactly edge_count edges
+                    patch_edge_count = 0
+                    for mod_name, patch_mask in prune_scores.items():
+                        dest = module_by_name(model, mod_name)
+                        assert isinstance(dest, PatchWrapper)
+                        assert dest.is_dest and dest.patch_mask is not None
+                        if patch_type == PatchType.EDGE_PATCH:
+                            dest.patch_mask.data = (patch_mask.abs() if use_abs else patch_mask >= threshold).float()
+                            patch_edge_count += dest.patch_mask.int().sum().item()
+                        else:
+                            assert patch_type == PatchType.TREE_PATCH
+                            dest.patch_mask.data = (patch_mask.abs() if use_abs else patch_mask < threshold).float()
+                            patch_edge_count += (1 - dest.patch_mask.int()).sum().item()
+                else: # edges is not None
+                    assert edges is not None
                 with t.inference_mode():
                     model_output = model(batch_input)[model.out_slice]
                 circ_outs[patch_edge_count][batch.key] = model_output.detach().clone()
