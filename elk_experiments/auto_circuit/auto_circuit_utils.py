@@ -397,11 +397,11 @@ def run_circuits(
                         assert isinstance(dest, PatchWrapper)
                         assert dest.is_dest and dest.patch_mask is not None
                         if patch_type == PatchType.EDGE_PATCH:
-                            dest.patch_mask.data = (patch_mask.abs() if use_abs else patch_mask >= threshold).float()
+                            dest.patch_mask.data = ((patch_mask.abs() if use_abs else patch_mask) >= threshold).float()
                             patch_edge_count += dest.patch_mask.int().sum().item()
                         else:
                             assert patch_type == PatchType.TREE_PATCH
-                            dest.patch_mask.data = (patch_mask.abs() if use_abs else patch_mask < threshold).float()
+                            dest.patch_mask.data = ((patch_mask.abs() if use_abs else patch_mask) < threshold).float()
                             patch_edge_count += (1 - dest.patch_mask.int()).sum().item()
                 else: # edges is not None
                     assert edges is not None
