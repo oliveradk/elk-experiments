@@ -288,10 +288,6 @@ def plot_equivs_bar(results: dict[int, EquivResult]):
     return fig, ax
 
 
-import matplotlib.pyplot as plt
-import numpy as np
-from typing import Dict, Tuple, Any
-
 def plot_num_ablated_C_gt_M(results: Dict[int, Any], min_equiv: int, epsilon: float = 0.1) -> Tuple[plt.Figure, plt.Axes]:
     if not 0 < epsilon <= 1:
         raise ValueError("epsilon must be a float between 0 and 1")
@@ -422,7 +418,6 @@ def plot_edge_scores_and_knees(edge_scores, kneedle_poly, kneedle_1d, min_equiv)
     ax.axvline(len(edge_scores) - min_equiv, color='b', linestyle='--', label="min equiv")
     ax.legend()
     return fig, ax
-
 
 
 
