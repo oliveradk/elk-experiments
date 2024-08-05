@@ -29,6 +29,7 @@ from auto_circuit.utils.custom_tqdm import tqdm
 
 from elk_experiments.auto_circuit.auto_circuit_utils import run_circuits, load_tf_model
 from elk_experiments.auto_circuit.score_funcs import GradFunc, AnswerFunc, get_score_func
+from elk_experiments.auto_circuit.node_graph import NodeGraph, sample_paths, SampleType
 
 
 
@@ -288,9 +289,16 @@ def plot_equivs_bar(results: dict[int, EquivResult]):
     return fig, ax
 
 
-def plot_num_ablated_C_gt_M(results: Dict[int, Any], min_equiv: int, epsilon: float = 0.1) -> Tuple[plt.Figure, plt.Axes]:
-    if not 0 < epsilon <= 1:
-        raise ValueError("epsilon must be a float between 0 and 1")
+def plot_num_ablated_C_gt_M(
+        results: Dict[int, Any], 
+        min_equiv: int, 
+        epsilon: float = 0.1, 
+        side: Optional[Literal["left", "right"]]=None
+    ) -> Tuple[plt.Figure, plt.Axes]:
+    if not -1 < epsilon < 1:
+        raise ValueError("epsilon must be a float between -1 and 1 (exclusive)")
+    if epsilon < 0 and side != "left":
+        raise ValueError("epsilon is negative, side must be 'left'")
 
     # Extract data from results
     edge_counts = list(results.keys())
@@ -309,16 +317,23 @@ def plot_num_ablated_C_gt_M(results: Dict[int, Any], min_equiv: int, epsilon: fl
 
     # Create horizontal lines for N, N/2, and N/2 ± epsilon * N
     ax.plot(x, ns, label='N', color='k', linestyle='-', linewidth=2)
-    ax.plot(x, [n/2 for n in ns], label='N/2', color='r', linestyle='--', linewidth=2)
-    ax.plot(x, [n/2 + epsilon*n for n in ns], label=f'N/2 + {epsilon}N', color='m', linestyle=':', linewidth=2)
-    ax.plot(x, [n/2 - epsilon*n for n in ns], label=f'N/2 - {epsilon}N', color='c', linestyle=':', linewidth=2)
-
-    # Fill the area between N/2 ± epsilon * N
-    ax.fill_between(x, 
+    if side == None:
+        ax.plot(x, [n/2 for n in ns], label='N/2', color='r', linestyle='--', linewidth=2)
+        ax.plot(x, [n/2 + epsilon*n for n in ns], label=f'N/2 + {epsilon}N', color='m', linestyle=':', linewidth=2)
+        ax.plot(x, [n/2 - epsilon*n for n in ns], label=f'N/2 - {epsilon}N', color='c', linestyle=':', linewidth=2)
+        # Fill the area between N/2 ± epsilon * N
+        ax.fill_between(x, 
                     [n/2 - epsilon*n for n in ns], 
                     [n/2 + epsilon*n for n in ns], 
                     alpha=0.2, color='y', label=f'N/2 ± {epsilon}N range')
-
+    elif side == "left":
+        ax.plot(x, [n/2 - epsilon*n for n in ns], label=f'N/2 - {epsilon}N', color='r', linestyle=':', linewidth=2)
+        # Fill the area between N/2 - epsilon * N and N
+        ax.fill_between(x,
+                        [n/2 - epsilon*n for n in ns],
+                        [n for n in ns],
+                        alpha=0.2, color='y', label=f'N/2 - {epsilon}N range')
+    
     # plot vertical dotted line for min_equiv
     min_equiv_k = next((i for i, k in enumerate(edge_counts) if k == min_equiv), None)
     ax.axvline(x=min_equiv_k, color='g', linestyle='--', label=f'Minimum Equivalent ({min_equiv})')
@@ -421,39 +436,6 @@ def plot_edge_scores_and_knees(edge_scores, kneedle_poly, kneedle_1d, min_equiv)
 
 
 
-def create_paths(srcs: set[SrcNode], dests: set[DestNode], n_layers: int) -> list[list[Edge]]:
-    #TODO: create paths from src to dest through different to
-    srcs_by_layer = {layer: {} for layer in range(1, n_layers+1)}
-    for scr in srcs:
-        if scr.layer < 1:
-            continue
-        srcs_by_layer[scr.layer][scr.head_idx] = scr
-
-    dests_by_layer = {layer: [] for layer in range(1, n_layers+1)}
-    for dest in dests:
-        if dest.layer > n_layers:
-            continue
-        dests_by_layer[dest.layer].append(dest)
-    for layer in dests_by_layer.keys():
-        dests_by_layer[layer].append(None)
-
-    paths: list[tuple[DestNode]] = list(product(*[layer_dests for layer_dests in dests_by_layer.values()]))
-
-    start = next((n for n in srcs if n.name == "Resid Start"))
-    end = next((n for n in dests if n.name == "Resid End"))
-
-    paths_edges: list[list[Edge]] = []
-    for path in paths:
-        path_edges = []
-        cur_src = start 
-        for dest in path:
-            if dest is None:
-                continue
-            path_edges.append(Edge(src=cur_src, dest=dest))
-            cur_src = srcs_by_layer[dest.layer][dest.head_idx]
-        path_edges.append(Edge(src=cur_src, dest=end))
-        paths_edges.append(path_edges)
-    return paths_edges
 
 def edges_from_mask(srcs: set[SrcNode], dests: set[DestNode], mask: Dict[str, torch.Tensor], token: bool=False) -> list[Edge]:
     #TODO: fix for SAEs
@@ -486,18 +468,6 @@ def edges_from_mask(srcs: set[SrcNode], dests: set[DestNode], mask: Dict[str, to
             edges.append(Edge(src=src_node, dest=dest_node, seq_idx=seq_idx))
     return edges
 
-def make_complement_paths(
-    srcs: set[SrcNode], 
-    dests: set[DestNode], 
-    n_layers: int, 
-    edges: list[Edge],
-) -> list[list[Edge]]:
-    paths = create_paths(srcs, dests, n_layers)
-    edge_set = set(edges)
-    complement_paths = [
-        path for path in tqdm(paths) if any(edge not in edge_set for edge in path) # new elements in path
-    ]
-    return complement_paths
 
 def get_edge_idx(edge: Edge, tokens=False):
     # TODO: make backwards compatible
@@ -539,11 +509,14 @@ def minimality_test( #TODO: seperate infalted circuit seperate from dataset, get
     dataloader: PromptDataLoader,
     attribution_scores: torch.Tensor | PruneScores,
     edges: list[Edge], 
-    filtered_paths: list[list[Edge]],
     edge_count: int, 
     ablation_type: AblationType, 
     grad_function: GradFunc,
     answer_function: AnswerFunc,
+    filtered_paths: Optional[list[list[Edge]]] = None,
+    sampling_type: Optional[SampleType] = None,
+    node_graph: Optional[NodeGraph] = None,
+    n_paths: Optional[int] = None,
     circuit_out: Optional[CircuitOutputs] = None,
     threshold: Optional[float] = None,
     use_abs: bool = True,
@@ -564,6 +537,22 @@ def minimality_test( #TODO: seperate infalted circuit seperate from dataset, get
         ).values())))
     if threshold is None:
         threshold = prune_scores_threshold(attribution_scores, edge_count, use_abs=use_abs)
+
+    # sample filtered paths if not provided
+    if filtered_paths is None:
+        if node_graph is None:
+            raise ValueError("node_graph must be provided if filtered_paths is not provided")
+        if sampling_type is None:
+            raise ValueError("sampling_type must be provided if filtered_paths is not provided")
+        if n_paths is None:
+            raise ValueError("n_paths must be provided if filtered_paths is not provided")
+        filtered_paths = sample_paths(
+            node_graph=node_graph,
+            n_paths=n_paths,
+            sample_type=sampling_type,
+            tested_edges=edges,
+        )
+
     test_results = {}
     for edge in tqdm(edges):
         test_results[edge] = minimality_test_edge(
