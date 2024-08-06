@@ -7,6 +7,8 @@ import math
 import torch 
 import numpy as np
 from scipy.stats import binom, beta
+from sklearn.metrics.pairwise import rbf_kernel
+from sklearn.preprocessing import KernelCenterer
 
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
@@ -17,6 +19,7 @@ from auto_circuit.types import (
     CircuitOutputs, 
     BatchKey,
     PruneScores,
+    BatchOutputs,
     PatchType, 
     AblationType,
     SrcNode, 
@@ -24,10 +27,9 @@ from auto_circuit.types import (
     Edge
 )
 from auto_circuit.utils.patchable_model import PatchableModel
-from auto_circuit.utils.tensor_ops import prune_scores_threshold
 from auto_circuit.utils.custom_tqdm import tqdm
 
-from elk_experiments.auto_circuit.auto_circuit_utils import run_circuits, load_tf_model
+from elk_experiments.auto_circuit.auto_circuit_utils import run_circuits, load_tf_model, prune_scores_threshold
 from elk_experiments.auto_circuit.score_funcs import GradFunc, AnswerFunc, get_score_func
 from elk_experiments.auto_circuit.node_graph import NodeGraph, sample_paths, SampleType
 
@@ -107,7 +109,7 @@ class EquivResult(NamedTuple):
 def equiv_test(
     model: PatchableModel, 
     dataloader: PromptDataLoader,
-    attribution_scores: torch.Tensor,
+    prune_scores: PruneScores,
     grad_function: GradFunc,
     answer_function: AnswerFunc,
     ablation_type: AblationType,
@@ -127,7 +129,7 @@ def equiv_test(
         dataloader=dataloader,
         test_edge_counts=edge_counts,
         thresholds=thresholds,
-        prune_scores=attribution_scores,
+        prune_scores=prune_scores,
         patch_type=PatchType.TREE_PATCH,
         ablation_type=ablation_type,
         reverse_clean_corrupt=False,
@@ -154,7 +156,7 @@ def equiv_test(
 def sweep_search_smallest_equiv(
     model: PatchableModel,
     dataloader: PromptDataLoader,
-    attribution_scores: torch.Tensor,
+    prune_scores: PruneScores,
     grad_function: GradFunc,
     answer_function: AnswerFunc,
     ablation_type: AblationType, 
@@ -162,13 +164,15 @@ def sweep_search_smallest_equiv(
     side: Optional[Literal["left", "right"]] = None,
     alpha: float = 0.05,
     epsilon: float = 0.1,
+    model_out: Optional[Dict[BatchKey, torch.Tensor]] = None,
 ) -> tuple[dict[int, EquivResult], int]:
     """Returns equiv test results and minimal equivalent number of edges."""
     full_results = {}
     width = 10 ** math.floor(math.log10(model.n_edges)-1)
     interval_min = 0 
-    interval_max = model.n_edges
-    model_out = {batch.key: model(batch.clean)[model.out_slice] for batch in dataloader}
+    interval_max = model.n_edges #FIXME: if not use_abs, should only look at positive values
+    if model_out is None:
+        model_out = {batch.key: model(batch.clean)[model.out_slice] for batch in dataloader}
     while width > 0:
         print(f"interval: {interval_min} - {interval_max}")
         print("width", width)
@@ -177,7 +181,7 @@ def sweep_search_smallest_equiv(
         test_results = equiv_test(
             model, 
             dataloader,
-            attribution_scores,
+            prune_scores,
             grad_function,
             answer_function,
             ablation_type,
@@ -214,7 +218,7 @@ def sweep_search_smallest_equiv(
 def bin_search_smallest_equiv(
     model: PatchableModel,
     dataloader: PromptDataLoader,
-    attribution_scores: torch.Tensor,
+    prune_scores: PruneScores,
     grad_function: GradFunc,
     answer_function: AnswerFunc,
     ablation_type: AblationType, 
@@ -234,7 +238,7 @@ def bin_search_smallest_equiv(
         num_ablated_C_gt_M, n, not_equiv, p_value = next(iter(equiv_test(
             model=model, 
             dataloader=dataloader,
-            attribution_scores=attribution_scores,
+            prune_scores=prune_scores,
             grad_function=grad_function,
             answer_function=answer_function,
             ablation_type=ablation_type,
@@ -507,7 +511,7 @@ class MinResult(NamedTuple):
 def minimality_test( #TODO: seperate infalted circuit seperate from dataset, get higher n 
     model: PatchableModel,
     dataloader: PromptDataLoader,
-    attribution_scores: torch.Tensor | PruneScores,
+    prune_scores: torch.Tensor | PruneScores,
     edges: list[Edge], 
     edge_count: int, 
     ablation_type: AblationType, 
@@ -530,14 +534,14 @@ def minimality_test( #TODO: seperate infalted circuit seperate from dataset, get
             model=model, 
             dataloader=dataloader,
             test_edge_counts=[edge_count],
-            prune_scores=attribution_scores,
+            prune_scores=prune_scores,
             patch_type=PatchType.TREE_PATCH,
             ablation_type=ablation_type,
             reverse_clean_corrupt=False,
             use_abs=use_abs
         ).values())))
     if threshold is None:
-        threshold = prune_scores_threshold(attribution_scores, edge_count, use_abs=use_abs)
+        threshold = prune_scores_threshold(prune_scores, edge_count, use_abs=use_abs)
 
     # sample filtered paths if not provided
     if filtered_paths is None:
@@ -559,7 +563,7 @@ def minimality_test( #TODO: seperate infalted circuit seperate from dataset, get
         test_results[edge] = minimality_test_edge(
             model=model,
             dataloader=dataloader,
-            attribution_scores=attribution_scores,
+            prune_scores=prune_scores,
             edge=edge,
             edges=edges,
             filtered_paths=filtered_paths,
@@ -579,7 +583,7 @@ def minimality_test( #TODO: seperate infalted circuit seperate from dataset, get
 def minimality_test_edge(
     model: PatchableModel,
     dataloader: PromptDataLoader,
-    attribution_scores: torch.Tensor,
+    prune_scores: PruneScores,
     edge: Edge,
     edges: list[Edge],
     filtered_paths: list[list[Edge]],
@@ -595,7 +599,7 @@ def minimality_test_edge(
 ) -> MinResult:
     
     # ablate edge and run 
-    prune_scores_ablated = deepcopy(attribution_scores)
+    prune_scores_ablated = deepcopy(prune_scores)
     prune_scores_ablated[edge.dest.module_name][get_edge_idx(edge, tokens=tokens)] = 0.0
     circuit_out_ablated = join_values(run_circuits(
         model=model, 
@@ -614,7 +618,7 @@ def minimality_test_edge(
     for batch in dataloader:
         prune_scores_inflated[batch.key] = {
             k: score.unsqueeze(0).repeat_interleave(batch.clean.size(0), 0)
-            for k, score in attribution_scores.items()
+            for k, score in prune_scores.items()
         }
         sampled_paths[batch.key] = random.choices(filtered_paths, k=batch.clean.size(0))
     for batch_key, paths in sampled_paths.items():
@@ -758,6 +762,84 @@ def plot_score_quantiles(
     ax.legend()
     return fig, ax
     
+
+
+def hsic(X: np.ndarray, Y: np.ndarray, gamma: float) -> float:
+    """(Hilbert-Schmidt Independence Criterion"""
+    K_X = rbf_kernel(X, gamma=gamma)
+    K_Y = rbf_kernel(Y, gamma=gamma)
+    centerer = KernelCenterer()
+    K_X_c = centerer.fit_transform(K_X)
+    K_Y_c = centerer.fit_transform(K_Y)
+    return np.trace(K_X_c @ K_Y_c)
+
+class IndepResults(NamedTuple):
+    not_indep: bool 
+    p_value: float 
+
+
+def independence_test(
+    model: PatchableModel,
+    dataloader: PromptDataLoader,
+    prune_scores: PruneScores,
+    ablation_type: AblationType,
+    grad_function: GradFunc,
+    answer_function: AnswerFunc,
+    threshold: float,
+    use_abs: bool,
+    alpha: float = 0.05,
+    B: int = 1000,
+) -> IndepResults:
+    # compute model out 
+    m_out: BatchOutputs = {}
+    for batch in dataloader:
+        m_out[batch.key] = model(batch.clean)[model.out_slice]
+    # construct independence scores, applying abs value if use_abs is False (to ablate negative edges and only take complement on positives)
+    independence_scores = deepcopy(prune_scores)
+    if not use_abs:
+        for k in independence_scores:
+            independence_scores[k][independence_scores[k] < 0] = threshold + 1
+    # next, we run the complement of the circuit 
+    c_comp_out = dict(next(iter(run_circuits(
+        model,
+        dataloader,
+        prune_scores=independence_scores,
+        thresholds=[threshold], # not sure that's really right here
+        patch_type=PatchType.EDGE_PATCH, # Edge patch is patching the edges in the circuit (not sure why?)
+        ablation_type=ablation_type,
+        reverse_clean_corrupt=False, 
+        use_abs=True,
+    ).values())))
+
+    # then, we compute the scores 
+    score_func = get_score_func(grad_function, answer_function)
+    m_scores = []
+    c_comp_scores = []
+    for batch in dataloader:
+        m_scores.append(score_func(m_out[batch.key], batch)) # supposed to be looking at all output #TODO
+        c_comp_scores.append(score_func(c_comp_out[batch.key], batch))
+    m_scores = torch.cat(m_scores)[:, None].detach()
+    c_comp_scores = torch.cat(c_comp_scores)[:, None].detach()#.cpu().numpy()
+    sigma = torch.cdist(m_scores, c_comp_scores, p=2).median().item()
+
+    # compute t_obs
+    t_obs = hsic(m_scores.cpu().numpy(), c_comp_scores.cpu().numpy(), gamma=sigma)
+
+    # then we compute the trace of the inner product of the cross product and itself (alternatively, the trace of the inner product of the covariance matrices)
+    # we store that value, then for b iterations 
+    t = 0
+    for b in range(B):
+        # permutate the model scores 
+        perm_m_scores = np.random.permutation(m_scores.cpu().numpy())
+        # compute the new HSIC value 
+        t_i = hsic(perm_m_scores, c_comp_scores.cpu().numpy(), gamma=sigma)
+        # increment t with 1 if new value greater 
+        t += t_obs < t_i
+    # p value = t / B
+    p_value = t / B
+    return IndepResults(not_indep=p_value < alpha, p_value=p_value)
+    
+
 
 
 

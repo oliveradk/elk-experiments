@@ -42,90 +42,144 @@ def node_to_seq_node(node: Node, seq_idx: int | None) -> SeqNode:
         seq_idx=seq_idx,
     )
 
-def valid_node(node: SeqNode, max_layer: int, last_seq_idx: int) -> bool:
-    return node.layer < max_layer - 2 or node.seq_idx == last_seq_idx or node.name.endswith(("K", "V"))
+def valid_parent(edge: Edge, seq_idx: int):
+    if edge.dest.name.endswith(("K", "V")):
+        return True
+    return edge.seq_idx == seq_idx
+
+def valid_node(node: SeqNode, max_layer: int, last_seq_idx: int, attn_only: bool=False) -> bool:
+    before_last = ((node.layer < max_layer - 2) or (attn_only and node.layer < max_layer - 1)) 
+    if before_last: 
+        return True  
+    if node.seq_idx == last_seq_idx: # last sequence index
+        return True 
+    if node.name.endswith(("K", "V")): # is k or value
+        return True
+    return False
 
 # construt node Graph class
 class NodeGraph():
 
     def __init__(
         self, 
-        srcs: list[SrcNode],
-        dests: list[DestNode],
         edges: list[Edge],
-        token: bool = True
+        token: bool = True,
+        attn_only: bool = False
     ):
-        self.srcs = srcs
-        self.dests = dests
         self.edges = edges
         self.token = token
+        self.attn_only = attn_only
         self.last_seq_idx = max([edge.seq_idx for edge in edges]) if token else None
-        self.max_layer = max([dest.layer for dest in dests])
+        self.max_layer = max([edge.dest.layer for edge in edges])
 
+        # helper data structures
         # dest and src idx to edges
         self.edges_by_dest_idx: dict[NodeIdx, list[Edge]] = defaultdict(list)
         self.edges_by_src_idx: dict[NodeIdx, list[Edge]] = defaultdict(list)
         for edge in self.edges:
-            self.edges_by_dest_idx[get_node_idx(edge.dest)].append(edge)
-            self.edges_by_src_idx[get_node_idx(edge.src)].append(edge)
-
+            self.edges_by_dest_idx[get_node_idx(edge.dest)].append(edge) # used for upstream propogation
+            self.edges_by_src_idx[get_node_idx(edge.src)].append(edge) # used for downstream propogation
         # convert sequence dest nodes to edges 
         self.dest_pairs_to_edges: dict[Tuple[int, int|None, str, int|None, int]: Edge] = {}
         for edge in self.edges:
             self.dest_pairs_to_edges[(*get_node_idx(edge.src), edge.dest.name, edge.dest.head_idx, edge.seq_idx)] = edge
-
-        self.graph: Graph = defaultdict(list[SeqNode])
-        self.nodes: list[SeqNode] = []
-        self.path_counts: PathCounts = defaultdict(int)
-
-    def build_graph(self):
-        # get start node
-        start_node = next(src for src in self.srcs if src.name == "Resid Start")
-        # construct dests to seq dests dict
-        dests_to_seq_dests: dict[DestNode, list[SeqNode]] = {
-            dest: [
-                node_to_seq_node(dest, seq_idx) 
-                for seq_idx in (range(self.last_seq_idx + 1) if self.token else [None]) # if not token, one seq_node with seq_idx=None
-            ]
-            for dest in list(self.dests) + [start_node]
-        }
-        # construct dest graph from resid end of last token, layer by layer, tracking path counts at each node
-        for dest in tqdm(sorted(list(self.dests) + [start_node], key=lambda x: x.layer, reverse=True)):
-            # iterate over each "sequence node" is dest
-            seq_nodes = dests_to_seq_dests[dest]
-            for seq_node in seq_nodes:
-                # if dest is mlp or q and layer is >= max_layers - 2, skip  
-                if not valid_node(seq_node, self.max_layer, self.last_seq_idx):
-                    continue
-                self.nodes.append(seq_node)
-                # if dest is resid end (leaf) add to graph and set path count to 1, and skip
-                if dest.name == "Resid End":
-                    self.graph[seq_node] = []
-                    self.path_counts[seq_node] = 1
-                    continue 
-                    # if dest is K, V 
-                # get downstream edges from dest
-                edges = self.edges_by_src_idx[get_node_idx(dest)]
-                if dest.name.endswith(("K", "V")) or not self.token:
-                    # if dest.layer >= max_layer - 2 (last layer or two layers depending on whether attention and mlp are counted together)
-                    if dest.layer >= self.max_layer - 2 and self.token:
-                        # convert edge dests to seq nodes with seq_idx = last_seq_idx
-                        child_dests = [dests_to_seq_dests[edge.dest][self.last_seq_idx] for edge in edges]
-                    else:
-                        # convert edge dests to all seq nodes
-                        child_dests = [seq_dest for edge in edges for seq_dest in dests_to_seq_dests[edge.dest]]
-                # else (q or mlp)
-                else: 
-                    # already checked if valid, but checking again
-                    assert valid_node(seq_node, self.max_layer, self.last_seq_idx)
-                    # convet edge dests to all seq nodes with same seq_idx
-                    child_dests = [dests_to_seq_dests[edge.dest][seq_node.seq_idx] for edge in edges]
-                # filter for valid child nodes
-                self.graph[seq_node] = [child_dest for child_dest in child_dests if valid_node(child_dest, self.max_layer, self.last_seq_idx)]
-                self.path_counts[seq_node] = sum([self.path_counts[child_dest] for child_dest in child_dests])
+        # nodes to dictionary of sequence nodes
+        self.nodes_to_seq_nodes: dict[Node, dict[int, SeqNode]] = defaultdict(dict[int, SeqNode])
+        for edge in self.edges:
+            if edge.src.name == "Resid Start":
+                self.nodes_to_seq_nodes[edge.src][edge.seq_idx] = node_to_seq_node(edge.src, edge.seq_idx)
+            self.nodes_to_seq_nodes[edge.dest][edge.seq_idx] = node_to_seq_node(edge.dest, edge.seq_idx)
+        self.seq_nodes = [
+            seq_node for seq_node_dict in self.nodes_to_seq_nodes.values() 
+            for seq_node in seq_node_dict.values() 
+            if valid_node(seq_node, self.max_layer, self.last_seq_idx, attn_only=self.attn_only)
+        ]
         
-        # ensure nodes are sorted by layer
-        assert all(self.nodes[i].layer >= self.nodes[i + 1].layer for i in range(len(self.nodes) - 1))
+        # core data structures
+        self.children: Graph = {}
+        self.parents: Graph = defaultdict(list[SeqNode])
+        self.path_counts: PathCounts = defaultdict(int)
+        self.reachable: dict[SeqNode, bool] = {}
+    
+    def build_graph(self):
+        self.build_children()
+        self.build_parents()
+
+    def build_children(self):
+        # construct dest graph from resid end of last token, layer by layer, tracking path counts at each node
+        for seq_node in tqdm(sorted(self.seq_nodes, key=lambda node: node.layer, reverse=True)):
+            # if dest is resid end (leaf) add to graph and set path count to 1, and skip
+            if seq_node.name == "Resid End":
+                self.children[seq_node] = []
+                self.path_counts[seq_node] = 1
+                continue 
+                # if dest is K, V 
+            # get downstream edges from dest
+            child_edges = self.edges_by_src_idx[get_node_idx(seq_node)]
+            if seq_node.name.endswith(("K", "V")) or not self.token:
+                # if dest.layer >= max_layer - 2 (last layer or two layers depending on whether attention and mlp are counted together)
+                if seq_node.layer >= self.max_layer - 2 and self.token:
+                    # convert edge dests to seq nodes with seq_idx = last_seq_idx
+                    child_dests = [
+                        self.nodes_to_seq_nodes[c_edge.dest][self.last_seq_idx] 
+                        for c_edge in child_edges if c_edge.seq_idx == self.last_seq_idx
+                    ]
+                else:
+                    # convert edge dests to all seq nodes
+                    child_dests = [self.nodes_to_seq_nodes[c_edge.dest][c_edge.seq_idx] for c_edge in child_edges]
+            # else (q or mlp)
+            else: 
+                # already checked if valid, but checking again
+                assert valid_node(seq_node, self.max_layer, self.last_seq_idx, attn_only=self.attn_only)
+                # convet edge dests to all seq nodes with same seq_idx
+                child_dests = [
+                    self.nodes_to_seq_nodes[c_edge.dest][seq_node.seq_idx] 
+                    for c_edge in child_edges if c_edge.seq_idx == seq_node.seq_idx # must be aligned b/c not k or v
+                ]
+            # filter for valid child nodes
+            self.children[seq_node] = [child_dest for child_dest in child_dests if valid_node(child_dest, self.max_layer, self.last_seq_idx, attn_only=self.attn_only)]
+            self.path_counts[seq_node] = sum([self.path_counts[child_dest] for child_dest in child_dests])
+
+        # test graph is sorted by layer
+        self.children = {
+            seq_node: self.children[seq_node] 
+            for seq_node in sorted(self.children.keys(), key=lambda node: node.layer, reverse=True)}
+        seq_nodes = self.get_nodes()
+        assert all([seq_nodes[i].layer >= seq_nodes[i + 1].layer for i in range(len(seq_nodes) - 1)])
+
+    
+    def build_parents(self):
+        # iterate over sequnce nodes starting from layer 0
+        for seq_node in tqdm(sorted(self.seq_nodes, key=lambda node: node.layer, reverse=False)):
+            if seq_node not in self.children:
+                raise ValueError(f"Node {seq_node} not in children")
+            # add parent to each child
+            for child in self.children[seq_node]:
+                self.parents[child].append(seq_node)
+            # set reachable
+            if seq_node.name == "Resid Start":
+                self.reachable[seq_node] = True
+                continue
+            self.reachable[seq_node] = any([self.reachable[parent] for parent in self.parents[seq_node]])
+    
+    def edge_in_path(self, edge: Edge) -> bool:
+        seq_node = self.nodes_to_seq_nodes[edge.dest][edge.seq_idx]
+        in_path = self.path_counts[seq_node] > 0 
+        if not in_path:
+            return False
+        if edge.src.name == "Resid Start":
+            return True
+        # look up edges by dest with src idx
+        p_edges = self.edges_by_dest_idx[get_node_idx(edge.src)]
+        p_edges = [p_edge for p_edge in p_edges if valid_parent(p_edge, edge.seq_idx)]
+        # ok so here we want to check if the dest is valid (must be in the same sequence)
+        p_seq_nodes = [self.nodes_to_seq_nodes[p_edge.dest][p_edge.seq_idx] for p_edge in p_edges]
+        reachable = any([self.reachable[p_seq_node] for p_seq_node in p_seq_nodes])
+        return reachable
+
+
+    def get_nodes(self) -> list[SeqNode]:
+        return [k for k in self.children.keys()]
 
 class SampleType(Enum):
     WALK = 0
@@ -135,19 +189,19 @@ class SampleType(Enum):
 def sample_path(node_graph: NodeGraph, sample_type: SampleType=SampleType.WALK) -> list[SeqNode]:
     path = []
     start_slice = slice(-node_graph.last_seq_idx if node_graph.token else -1, None)
-    current = random.choice(node_graph.nodes[start_slice]) # resid starts #TODO: fix
+    current = random.choice(node_graph.get_nodes()[start_slice]) # resid starts #TODO: fix
     assert current.name == "Resid Start"
     path.append(current)
 
     if sample_type == SampleType.UNIFORM:
         while current.name != "Resid End":
-            neighbors = node_graph.graph[current]
+            neighbors = node_graph.children[current]
             probs = [node_graph.path_counts[neighbor] / node_graph.path_counts[current] for neighbor in neighbors]
-            current = random.choices(node_graph.graph[current], weights=probs)[0] 
+            current = random.choices(node_graph.children[current], weights=probs)[0] 
             path.append(current)
     elif sample_type == SampleType.WALK:
         while current.name != "Resid End":
-            neighbors = node_graph.graph[current]
+            neighbors = node_graph.children[current]
             current = random.choice(neighbors)
             path.append(current)
     return path 
