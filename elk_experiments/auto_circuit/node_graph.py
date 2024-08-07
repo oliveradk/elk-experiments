@@ -47,6 +47,7 @@ def valid_parent(edge: Edge, seq_idx: int):
         return True
     return edge.seq_idx == seq_idx
 
+
 def valid_node(node: SeqNode, max_layer: int, last_seq_idx: int, attn_only: bool=False) -> bool:
     before_last = ((node.layer < max_layer - 2) or (attn_only and node.layer < max_layer - 1)) 
     if before_last: 
@@ -150,36 +151,43 @@ class NodeGraph():
     
     def build_parents(self):
         # iterate over sequnce nodes starting from layer 0
-        for seq_node in tqdm(sorted(self.seq_nodes, key=lambda node: node.layer, reverse=False)):
+        sorted_seq_nodes = sorted(self.seq_nodes, key=lambda node: node.layer, reverse=False)
+        for seq_node in tqdm(sorted_seq_nodes):
             if seq_node not in self.children:
                 raise ValueError(f"Node {seq_node} not in children")
             # add parent to each child
             for child in self.children[seq_node]:
-                self.parents[child].append(seq_node)
+                self.parents[child].append(seq_node) # add 
             # set reachable
             if seq_node.name == "Resid Start":
                 self.reachable[seq_node] = True
                 continue
+            # for queries, want to check if k or v is reachable in a different sequence positin
             self.reachable[seq_node] = any([self.reachable[parent] for parent in self.parents[seq_node]])
     
-    def edge_in_path(self, edge: Edge) -> bool:
-        seq_node = self.nodes_to_seq_nodes[edge.dest][edge.seq_idx]
-        in_path = self.path_counts[seq_node] > 0 
-        if not in_path:
-            return False
-        if edge.src.name == "Resid Start":
-            return True
-        # look up edges by dest with src idx
-        p_edges = self.edges_by_dest_idx[get_node_idx(edge.src)]
-        p_edges = [p_edge for p_edge in p_edges if valid_parent(p_edge, edge.seq_idx)]
-        # ok so here we want to check if the dest is valid (must be in the same sequence)
-        p_seq_nodes = [self.nodes_to_seq_nodes[p_edge.dest][p_edge.seq_idx] for p_edge in p_edges]
-        reachable = any([self.reachable[p_seq_node] for p_seq_node in p_seq_nodes])
-        return reachable
-
-
     def get_nodes(self) -> list[SeqNode]:
         return [k for k in self.children.keys()]
+
+
+def edge_in_path(edge: Edge, node_graph: NodeGraph, in_path_req=True, reach_req=True) -> bool:
+    assert (in_path_req or reach_req)
+    if in_path_req:
+        seq_node = node_graph.nodes_to_seq_nodes[edge.dest][edge.seq_idx]
+        in_path = node_graph.path_counts[seq_node] > 0 
+        if not in_path:
+            return False
+    if not reach_req:
+        return True
+    if edge.src.name == "Resid Start":
+        return True
+    # look up edges by dest with src idx
+    p_edges = node_graph.edges_by_dest_idx[get_node_idx(edge.src)]
+
+    p_edges = [p_edge for p_edge in p_edges if valid_parent(p_edge, edge.seq_idx)]
+    # ok so here we want to check if the dest is valid (must be in the same sequence)
+    p_seq_nodes = [node_graph.nodes_to_seq_nodes[p_edge.dest][p_edge.seq_idx] for p_edge in p_edges]
+    reachable = any([node_graph.reachable[p_seq_node] for p_seq_node in p_seq_nodes])
+    return reachable
 
 class SampleType(Enum):
     WALK = 0
