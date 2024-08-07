@@ -262,36 +262,6 @@ def bin_search_smallest_equiv(
     return min_equiv, min_equiv_p_val
 
 
-def plot_equivs_bar(results: dict[int, EquivResult]):
-    fig, ax = plt.subplots(figsize=(20, 1))
-    not_equivs = [results[edge_count][2] for edge_count in results.keys()]
-    data = not_equivs
-    # Create a custom colormap
-    cmap = mcolors.ListedColormap(['green', 'red'])
-    norm = mcolors.BoundaryNorm([0, 0.5, 1], cmap.N)
-
-    # Create the bar plot
-    ax.bar(edge_counts, [1]*len(data), color=cmap(norm(data)), width=10)
-
-    # adjust plot
-    ax.set_yticks([])  # Remove y-axis ticks
-    ax.set_xlim(-0.5, max(edge_counts) - 0.5)  # Adjust x-axis limits to center the bars
-
-    # add label
-    ax.set_xlabel("edge count")
-
-    # Create legend
-    red_patch = mpatches.Patch(color='red', label='Not Equiv')
-    green_patch = mpatches.Patch(color='green', label='Equiv')
-    ax.legend(handles=[red_patch, green_patch], loc='upper center', bbox_to_anchor=(0.15, -0.25), ncol=2)
-
-    # remove spines
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    ax.spines['left'].set_visible(False)
-
-    return fig, ax
-
 
 def plot_num_ablated_C_gt_M(
         results: Dict[int, Any], 

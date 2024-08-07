@@ -24,64 +24,6 @@ def set_model(model: HookedTransformer, disbale_grad: bool = True):
             param.requires_grad = False
     return model
 
-
-# def train_detector_cache(
-#         detector_dir: str, 
-#         detector: AnomalyDetector, 
-#         task: tasks.Task, 
-#         batch_size, 
-#         eval_batch_size,
-#         cache: ActivationCache = None,
-#         cache_path: str = None,
-#         overwrite=False,
-#         overwrite_cache=False,
-#         **train_kwargs
-# ):  
-#     detector_dir = Path(detector_dir)
-#     if os.path.exists(detector_dir) and not overwrite:
-#         detector.load_weights(os.path.join(detector_dir, "detector.pth"))
-#         out = scripts.eval_detector(task, detector, save_path=None, batch_size=eval_batch_size, pbar=True)
-#     else:
-#         out = scripts.train_detector(
-#             task, detector, save_path=detector_dir, batch_size=batch_size, eval_batch_size=eval_batch_size, **train_kwargs
-#         )
-#     if overwrite_cache and cache is not None and cache_path is not None:
-#         if os.path.exists(cache_path): # remove old cache
-#             os.remove(cache_path)
-#         cache.store(cache_path)
-#     return out
-
-# def learn_graph_cache(
-#     model,
-#     tokens,
-#     metric,
-#     upstream_nodes,
-#     downstream_nodes,
-#     batch_size,
-#     cache_path,
-#     verbose=False,
-#     overwrite=False,
-# ):
-#     if cache_path.is_file() and not overwrite:
-#         graph = EAPGraph(
-#             model.cfg, 
-#             upstream_nodes=upstream_nodes,
-#             downstream_nodes=downstream_nodes,
-#         )
-#         graph.load_scores(cache_path)
-#     else:
-#         graph = EAP(
-#             model=model,
-#             clean_tokens=tokens,
-#             metric=metric,
-#             upstream_nodes=upstream_nodes,
-#             downstream_nodes=downstream_nodes,
-#             batch_size=batch_size,
-#             verbose=verbose,
-#         )
-#         graph.save_scores(cache_path)
-#     return graph
-
 def get_activation_at_last_token(
     activation: torch.Tensor, inputs: list[list[int]], name: str
 ):
@@ -112,8 +54,24 @@ def repo_path_to_abs_path(path: str) -> Path:
     repo_abs_path = Path(__file__).parent.parent.absolute()
     return repo_abs_path / path
 
+OUTPUT_DIR = repo_path_to_abs_path("output")
+
+
 def prod(x):
     cum_prod = 1 
     for i in x:
         cum_prod *= i
     return cum_prod
+
+
+def is_notebook() -> bool:
+    try:
+        shell = get_ipython().__class__.__name__
+        if shell == 'ZMQInteractiveShell':
+            return True   # Jupyter notebook or qtconsole
+        elif shell == 'TerminalInteractiveShell':
+            return False  # Terminal running IPython
+        else:
+            return False  # Other type (?)
+    except NameError:
+        return False      # Probably standard Python interpreter
