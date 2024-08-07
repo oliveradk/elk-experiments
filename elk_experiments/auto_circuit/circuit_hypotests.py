@@ -148,7 +148,14 @@ def equiv_test(
             circuit_out, model_out, dataloader, grad_function, answer_function
         )
         not_equiv, p_value = run_non_equiv_test(num_ablated_C_gt_M, n, alpha, epsilon, side=side)
-        test_results[edge_count] = EquivResult(num_ablated_C_gt_M, n, not_equiv, p_value, circ_scores, model_scores)
+        test_results[edge_count] = EquivResult(
+            num_ablated_C_gt_M, 
+            n, 
+            not_equiv, 
+            p_value, 
+            circ_scores.detach().cpu(), 
+            model_scores.detach().cpu()
+        )
     return test_results
 
 
@@ -332,11 +339,11 @@ def plot_num_ablated_C_gt_M(
 
 def plot_circuit_and_model_scores(test_results: Dict[int, EquivResult], min_equiv: int) -> Tuple[plt.Figure, plt.Axes]:
     # mean and std of circ_scores 
-    circ_scores_mean = {k: torch.mean(v.circ_scores).cpu() for k, v in test_results.items()}
-    circ_scores_std = {k: torch.std(v.circ_scores).cpu() for k, v in test_results.items()}
+    circ_scores_mean = {k: torch.mean(v.circ_scores) for k, v in test_results.items()}
+    circ_scores_std = {k: torch.std(v.circ_scores) for k, v in test_results.items()}
     # mean and std of model scores 
-    model_scores_mean = {k: torch.mean(v.model_scores).cpu() for k, v in test_results.items()}
-    model_scores_std = {k: torch.std(v.model_scores).cpu() for k, v in test_results.items()}
+    model_scores_mean = {k: torch.mean(v.model_scores) for k, v in test_results.items()}
+    model_scores_std = {k: torch.std(v.model_scores) for k, v in test_results.items()}
 
     # Convert dictionaries to lists for easier plotting
     labels = list(circ_scores_mean.keys())
@@ -344,8 +351,8 @@ def plot_circuit_and_model_scores(test_results: Dict[int, EquivResult], min_equi
     circ_stds = list(circ_scores_std.values())
 
     # Assuming model_scores_mean and model_scores_std are constants
-    model_mean = next(iter(model_scores_mean.values())).detach()  # Get the constant model mean
-    model_std = next(iter(model_scores_std.values())).detach()  # Get the constant model std
+    model_mean = next(iter(model_scores_mean.values())) # Get the constant model mean
+    model_std = next(iter(model_scores_std.values())) # Get the constant model std
 
     # Set up the plot
     fig, ax = plt.subplots(figsize=(12, 6))
@@ -646,8 +653,8 @@ def minimality_test_edge(
         circ_inflated_diff = torch.abs(circ_out_inflated_logit_diff - circ_out_inflated_ablated_logit_diff)
         num_edge_score_gt_ref += torch.sum(circ_diff > circ_inflated_diff).item()
         # log diffs
-        diffs.append(circ_diff)
-        diffs_inflated.append(circ_inflated_diff)
+        diffs.append(circ_diff.detach().cpu())
+        diffs_inflated.append(circ_inflated_diff.detach().cpu())
         n += bs
     
     p_value = binom.cdf(num_edge_score_gt_ref, n, q_star)
@@ -687,7 +694,7 @@ def plot_score_quantiles(
 ):
     # calculate quantiles 
     quantiles = [
-        np.quantile(torch.cat(min_results[edge][3]).detach().cpu().numpy(), quantile_range) 
+        np.quantile(torch.cat(min_results[edge][3]).numpy(), quantile_range) 
         for edge in edges
     ]
     lower_quantiles = [q[0] for q in quantiles]
@@ -695,14 +702,14 @@ def plot_score_quantiles(
 
     # compute mean and quartiles of diff inflated
     diff_infl = torch.cat([torch.cat(min_results[edge][4]) for edge in edges])
-    quantile_infl = np.quantile(diff_infl.detach().cpu().numpy(), quantile_range)
-    mean_infl = diff_infl.mean().detach().cpu().numpy()
-    median_infl = diff_infl.median().detach().cpu().numpy()
+    quantile_infl = np.quantile(diff_infl.numpy(), quantile_range)
+    mean_infl = diff_infl.mean().numpy()
+    median_infl = diff_infl.median().numpy()
 
     # plot average diff with quantile ranges
     fig, ax = plt.subplots(figsize=(12, 4))
-    diffs = [torch.cat(min_results[edge][3]).mean().detach().cpu().numpy() for edge in edges]
-    median_diffs = [torch.cat(min_results[edge][3]).median().detach().cpu().numpy() for edge in edges]
+    diffs = [torch.cat(min_results[edge][3]).mean().numpy() for edge in edges]
+    median_diffs = [torch.cat(min_results[edge][3]).median().numpy() for edge in edges]
 
     # Plot error bars with quantile ranges, median, and mean
     ax.errorbar(range(len(diffs)), diffs, 
@@ -788,26 +795,33 @@ def independence_test(
     for batch in dataloader:
         m_scores.append(score_func(m_out[batch.key], batch)) # supposed to be looking at all output #TODO
         c_comp_scores.append(score_func(c_comp_out[batch.key], batch))
-    m_scores = torch.cat(m_scores)[:, None].detach()
-    c_comp_scores = torch.cat(c_comp_scores)[:, None].detach()#.cpu().numpy()
+    m_scores = torch.cat(m_scores)[:, None].detach().cpu().numpy()
+    c_comp_scores = torch.cat(c_comp_scores)[:, None].detach().cpu().numpy()
     sigma = torch.cdist(m_scores, c_comp_scores, p=2).median().item()
 
     # compute t_obs
-    t_obs = hsic(m_scores.cpu().numpy(), c_comp_scores.cpu().numpy(), gamma=sigma)
+    t_obs = hsic(m_scores, c_comp_scores, gamma=sigma)
 
     # then we compute the trace of the inner product of the cross product and itself (alternatively, the trace of the inner product of the covariance matrices)
     # we store that value, then for b iterations 
     t = 0
     for b in range(B):
         # permutate the model scores 
-        perm_m_scores = np.random.permutation(m_scores.cpu().numpy())
+        perm_m_scores = np.random.permutation(m_scores)
         # compute the new HSIC value 
-        t_i = hsic(perm_m_scores, c_comp_scores.cpu().numpy(), gamma=sigma)
+        t_i = hsic(perm_m_scores, c_comp_scores, gamma=sigma)
         # increment t with 1 if new value greater 
         t += t_obs < t_i
     # p value = t / B
     p_value = t / B
     return IndepResults(not_indep=p_value < alpha, p_value=p_value)
+
+
+def result_to_json(result: NamedTuple): 
+    return {
+        k: v.tolist() if isinstance(v, torch.Tensor) else v 
+        for k, v in result._asdict().items()
+    }
     
 
 

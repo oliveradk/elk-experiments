@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[2]:
+# In[1]:
 
 
 # set cuda visible devices
@@ -26,7 +26,7 @@ if is_notebook():
 
 # ##  Minimal Faithful Circuit According to Prune Score Ordering
 
-# In[4]:
+# In[1]:
 
 
 import os
@@ -90,7 +90,8 @@ from elk_experiments.auto_circuit.circuit_hypotests import (
     plot_p_values, 
     plot_edge_k, 
     plot_score_quantiles,
-    independence_test
+    independence_test, 
+    result_to_json
 )
 
 from elk_experiments.auto_circuit.node_graph import (
@@ -104,10 +105,10 @@ from elk_experiments.auto_circuit.node_graph import (
     edge_in_path
 )
 from elk_experiments.auto_circuit.tasks import TASK_DICT
-from elk_experiments.utils import OUTPUT_DIR
+from elk_experiments.utils import OUTPUT_DIR, repo_path_to_abs_path, load_cache, save_cache, save_json
 
 
-# In[5]:
+# In[4]:
 
 
 # config class
@@ -126,7 +127,7 @@ class Config:
     answer_func_mask: Optional[Union[AnswerFunc, str]] = None
     clean_corrupt: Optional[Literal["clean", "corrupt"]] = None
     side: Optional[Literal["left", "right", "none"]] = None
-    out_dir: Union[str, Path] = OUTPUT_DIR 
+    save_cache: bool = True
     
     def __post_init__(self):
         if isinstance(self.ablation_type, str):
@@ -155,12 +156,9 @@ class Config:
             self.side = None if self.use_abs else "left" 
         elif self.side == "none":
             self.side = None
-        
-        if not isinstance(self.out_dir, Path):
-            self.out_dir = Path(self.out_dir)
 
 
-# In[6]:
+# In[18]:
 
 
 # initialize config 
@@ -171,8 +169,9 @@ if not is_notebook():
     conf = OmegaConf.merge(OmegaConf.structured(conf), OmegaConf.from_cli(sys.argv[1:]))
 
 # handle directories
-conf.out_dir.mkdir(exist_ok=True)
-score_dir = conf.out_dir / f"{conf.task}_{conf.ablation_type.name}_{conf.grad_func.name}_{conf.answer_func.name}_{conf.ig_samples}" 
+out_dir = OUTPUT_DIR
+out_dir.mkdir(exist_ok=True)
+score_dir = out_dir / f"{conf.task.replace(' ', '_')}_{conf.ablation_type.name}_{conf.grad_func.name}_{conf.answer_func.name}_{conf.ig_samples}" 
 score_dir.mkdir(exist_ok=True)
 exp_dir = score_dir / f"{conf.use_abs}_{conf.alpha}_{conf.epsilon}_{conf.q_star}"
 exp_dir.mkdir(exist_ok=True)
@@ -202,6 +201,8 @@ prune_scores = mask_gradient_prune_scores(
     integrated_grad_samples=10, # 10 1 for debugging
     clean_corrupt=conf.clean_corrupt,
 )
+if conf.save_cache:
+    save_cache(prune_scores, exp_dir, "prune_scores")
 
 
 # In[ ]:
@@ -233,6 +234,7 @@ equiv_results, min_equiv = sweep_search_smallest_equiv(
     epsilon=conf.side,
     model_out=model_out_train,
 )
+save_json(result_to_json(equiv_results), exp_dir, "equiv_results.json")
 
 
 # In[ ]:
@@ -252,7 +254,7 @@ equiv_test_result = equiv_test(
     epsilon=conf.epsilon,
     model_out=model_out_test
 )
-print("Equiv on Test: ", not equiv_test_result[min_equiv].not_equiv)
+save_json(result_to_json(equiv_test_result), exp_dir, "equiv_test_result.json")
 
 
 # In[ ]:
@@ -292,10 +294,7 @@ min_equiv_valid_edges
 
 
 # mask out all edges not in edges to dest
-valid_edge_scores = deepcopy(prune_scores)
-for edge in set(edges) - set(valid_edges):
-    edge_idx = get_edge_idx(edge, tokens=task.token_circuit)
-    valid_edge_scores[edge.dest.module_name][edge_idx] = 0.0
+valid_edge_scores = task.model.circuit_prune_scores(valid_edges)
 
 
 # In[ ]:
@@ -310,14 +309,15 @@ valid_edges_equiv_result = equiv_test(
     conf.grad_func,
     conf.answer_func,
     conf.ablation_type,
-    thresholds=[threshold],
+    edge_counts=[min_equiv_valid_edges],
     model_out=model_out_train,
     full_model=None,
     use_abs=conf.use_abs,
     side=conf.side,
     alpha=conf.alpha,
     epsilon=conf.epsilon,
-)[len(valid_edges)]
+)[min_equiv_valid_edges]
+save_json(result_to_json(valid_edges_equiv_result), exp_dir, "valid_edges_equiv_result.json")
 
 
 # In[ ]:
@@ -339,22 +339,22 @@ fig = draw_seq_graph(
     orientation="h",
     use_abs=False,
     seq_labels=task.test_loader.seq_labels,
-    file_path=exp_dir / "valid_edge_graph.png"
 )
+fig.write_image(repo_path_to_abs_path(exp_dir / "valid_edge_graph.png"))
 
 
 # In[ ]:
 
 
 fig, ax = plot_num_ablated_C_gt_M(equiv_results, epsilon=conf.epsilon, min_equiv=min_equiv, side="left" if not conf.use_abs else None)
-fig.savefig(exp_dir / "num_ablated_C_gt_M.png")
+fig.savefig(repo_path_to_abs_path(exp_dir / "num_ablated_C_gt_M.png"))
 
 
 # In[ ]:
 
 
 fig, ax = plot_circuit_and_model_scores(equiv_results, min_equiv)
-fig.savefig(exp_dir / "circuit_model_scores.png")
+fig.savefig(repo_path_to_abs_path(exp_dir / "circuit_model_scores.png"))
 
 
 # In[ ]:
@@ -367,7 +367,7 @@ if not conf.use_abs:
     edge_scores = edge_scores[edge_scores > 0]
 kneedle_poly, kneedle_1d = compute_knees(edge_scores)
 fig, ax = plot_edge_scores_and_knees(edge_scores, kneedle_poly, kneedle_1d, min_equiv)
-fig.savefig(exp_dir / "edge_scores_knees.png")
+fig.savefig(repo_path_to_abs_path(exp_dir / "edge_scores_knees.png"))
 
 
 # In[ ]:
@@ -431,6 +431,7 @@ min_test_results = minimality_test(
     alpha=conf.alpha, 
     q_star=conf.q_star
 )
+save_json(result_to_json(min_test_results), exp_dir, "min_test_results.json")
 
 
 # In[ ]:
@@ -458,14 +459,14 @@ min_test_true_edge_results = minimality_test(
     q_star=conf.q_star,
     stop_if_failed=False
 )
+save_json(result_to_json(min_test_true_edge_results), exp_dir, "min_test_true_edge_results.json")
 
 
 # In[ ]:
 
 
-# plot p values as scatter plot
-#TODO: I think there's an error here? 
 fig, ax = plot_p_values(min_test_results, edges_under_test, edges_under_test_scores)
+fig.savefig(repo_path_to_abs_path(exp_dir / "min_test_p_values.png"))
 
 
 # In[ ]:
@@ -473,6 +474,7 @@ fig, ax = plot_p_values(min_test_results, edges_under_test, edges_under_test_sco
 
 true_edge_scores = {edge: torch.tensor(1.1) for edge in task.true_edges}
 fig, ax = plot_p_values(min_test_true_edge_results, task.true_edges, true_edge_scores)
+fig.savefig(repo_path_to_abs_path(exp_dir / "min_test_true_edge_p_values.png"))
 
 
 # In[ ]:
@@ -481,7 +483,8 @@ fig, ax = plot_p_values(min_test_true_edge_results, task.true_edges, true_edge_s
 # plot frac of n 
 batch_size = task.batch_size[1] if isinstance(task.batch_size, tuple) else task.batch_size
 batch_count = task.batch_count[1] if isinstance(task.batch_count, tuple) else task.batch_count
-plot_edge_k(min_test_results, edges_under_test, edges_under_test_scores, batch_size * batch_count, q_star=conf.q_star)
+fix, ax = plot_edge_k(min_test_results, edges_under_test, edges_under_test_scores, batch_size * batch_count, q_star=conf.q_star)
+fig.savefig(repo_path_to_abs_path(exp_dir / "min_test_edge_k.png"))
 
 
 # In[ ]:
@@ -490,6 +493,7 @@ plot_edge_k(min_test_results, edges_under_test, edges_under_test_scores, batch_s
 batch_size = task.batch_size[1] if isinstance(task.batch_size, tuple) else task.batch_size
 batch_count = task.batch_count[1] if isinstance(task.batch_count, tuple) else task.batch_count
 plot_edge_k(min_test_true_edge_results, task.true_edges, true_edge_scores, batch_size * batch_count, q_star=conf.q_star)
+fig.savefig(repo_path_to_abs_path(exp_dir / "min_test_true_edge_k.png"))
 
 
 # In[ ]:
@@ -497,12 +501,14 @@ plot_edge_k(min_test_true_edge_results, task.true_edges, true_edge_scores, batch
 
 # plot average diff 
 fit, ax = plot_score_quantiles(min_test_results, edges_under_test, edges_under_test_scores, quantile_range=[0.00, 1.00])
+fig.savefig(repo_path_to_abs_path(exp_dir / "min_test_score_quantiles.png"))
 
 
 # In[ ]:
 
 
 fit, ax = plot_score_quantiles(min_test_true_edge_results, task.true_edges, true_edge_scores, quantile_range=[0.00, 1.00])
+fig.savefig(repo_path_to_abs_path(exp_dir / "min_test_true_edge_score_quantiles.png"))
 
 
 # # Independence Test
@@ -542,8 +548,8 @@ indep_result = independence_test(
     threshold=threshold, 
     use_abs=conf.use_abs,
     B=1000
-)
-indep_result
+) 
+save_json(result_to_json(indep_result), exp_dir, "indep_result.json")
 
 
 # In[ ]:
@@ -560,5 +566,5 @@ indep_true_edge_result = independence_test(
     alpha=conf.alpha,
     B=1000
 )
-indep_true_edge_result
+save_json(result_to_json(indep_true_edge_result), exp_dir, "indep_true_edge_result.json")
 
