@@ -510,7 +510,7 @@ fig.savefig(repo_path_to_abs_path(exp_dir / "min_test_edge_k.png"))
 
 batch_size = task.batch_size[1] if isinstance(task.batch_size, tuple) else task.batch_size
 batch_count = task.batch_count[1] if isinstance(task.batch_count, tuple) else task.batch_count
-plot_edge_k(min_test_true_edge_results, min_test_true_edge_results.keys(), true_edge_scores, batch_size * batch_count, q_star=conf.q_star)
+fig, ax = plot_edge_k(min_test_true_edge_results, min_test_true_edge_results.keys(), true_edge_scores, batch_size * batch_count, q_star=conf.q_star)
 fig.savefig(repo_path_to_abs_path(exp_dir / "min_test_true_edge_k.png"))
 
 
@@ -518,14 +518,14 @@ fig.savefig(repo_path_to_abs_path(exp_dir / "min_test_true_edge_k.png"))
 
 
 # plot average diff 
-fit, ax = plot_score_quantiles(min_test_results, edges_under_test, edges_under_test_scores, quantile_range=[0.00, 1.00])
+fig, ax = plot_score_quantiles(min_test_results, edges_under_test, edges_under_test_scores, quantile_range=[0.00, 1.00])
 fig.savefig(repo_path_to_abs_path(exp_dir / "min_test_score_quantiles.png"))
 
 
 # In[52]:
 
 
-fit, ax = plot_score_quantiles(min_test_true_edge_results, min_test_true_edge_results.keys(), true_edge_scores, quantile_range=[0.00, 1.00])
+fig, ax = plot_score_quantiles(min_test_true_edge_results, min_test_true_edge_results.keys(), true_edge_scores, quantile_range=[0.00, 1.00])
 fig.savefig(repo_path_to_abs_path(exp_dir / "min_test_true_edge_score_quantiles.png"))
 
 
