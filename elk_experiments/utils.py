@@ -106,7 +106,7 @@ def save_json(data, folder_name: str, base_filename: str):
     file_path = folder / f"{base_filename}.json"
     print(f"Saving json to {file_path}")
     with open(file_path, "w") as f:
-        json.dump(data, f)
+        json.dump(data, f, indent=4)
 
 def load_json(folder_name: str, filename: str):
     """

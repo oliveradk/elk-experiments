@@ -5,12 +5,30 @@
 
 
 # set cuda visible devices
-from elk_experiments.utils import is_notebook
+def is_notebook() -> bool:
+    try:
+        shell = get_ipython().__class__.__name__
+        if shell == 'ZMQInteractiveShell':
+            return True   # Jupyter notebook or qtconsole
+        elif shell == 'TerminalInteractiveShell':
+            return False  # Terminal running IPython
+        else:
+            return False  # Other type (?)
+    except NameError:
+        return False      # Probably standard Python interpreter
+
 import os
 if is_notebook():
-    os.environ["CUDA_VISIBLE_DEVICES"] = "4" #"1"
-    os.environ['CUDA_LAUNCH_BLOCKING']="1"
-    os.environ['TORCH_USE_CUDA_DSA'] = "1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "7" #"1"
+    # os.environ['CUDA_LAUNCH_BLOCKING']="1"
+    # os.environ['TORCH_USE_CUDA_DSA'] = "1"
+
+
+# In[2]:
+
+
+import torch 
+torch.cuda.is_available()
 
 
 # # Hypothesis Testing Automatically Discovered Circuits
@@ -24,9 +42,9 @@ if is_notebook():
 # 
 # 
 
-# ##  Minimal Faithful Circuit According to Prune Score Ordering
+# #  Minimal Faithful Circuit According to Prune Score Ordering
 
-# In[1]:
+# In[3]:
 
 
 import os
@@ -119,14 +137,14 @@ class Config:
     ablation_type: Union[AblationType, str] = AblationType.TOKENWISE_MEAN_CORRUPT 
     grad_func: Optional[Union[GradFunc, str]] = None
     answer_func: Optional[Union[AnswerFunc, str]] = None
-    ig_samples: int = 10, 
+    ig_samples: int = 10
     alpha: float = 0.05
     epsilon: Optional[float] = None
     q_star: float = 0.9 
     grad_func_mask: Optional[Union[GradFunc, str]] = None
     answer_func_mask: Optional[Union[AnswerFunc, str]] = None
-    clean_corrupt: Optional[Literal["clean", "corrupt"]] = None
-    side: Optional[Literal["left", "right", "none"]] = None
+    clean_corrupt: Optional[str] = None #TODO: make enum
+    side: Optional[str] = None # TODO: make enum
     save_cache: bool = True
     
     def __post_init__(self):
@@ -158,7 +176,7 @@ class Config:
             self.side = None
 
 
-# In[18]:
+# In[5]:
 
 
 # initialize config 
@@ -167,6 +185,10 @@ conf = Config()
 if not is_notebook():
     import sys 
     conf = OmegaConf.merge(OmegaConf.structured(conf), OmegaConf.from_cli(sys.argv[1:]))
+
+
+# In[6]:
+
 
 # handle directories
 out_dir = OUTPUT_DIR
@@ -177,7 +199,7 @@ exp_dir = score_dir / f"{conf.use_abs}_{conf.alpha}_{conf.epsilon}_{conf.q_star}
 exp_dir.mkdir(exist_ok=True)
 
 
-# In[ ]:
+# In[7]:
 
 
 # initialize task
@@ -185,7 +207,7 @@ task = TASK_DICT[conf.task]
 task.init_task()
 
 
-# In[ ]:
+# In[8]:
 
 
 # compute edge scores
@@ -198,14 +220,14 @@ prune_scores = mask_gradient_prune_scores(
     answer_function=conf.answer_func_mask.value, #answer_function,
     mask_val=None, 
     ablation_type=conf.ablation_type,
-    integrated_grad_samples=10, # 10 1 for debugging
+    integrated_grad_samples=conf.ig_samples, 
     clean_corrupt=conf.clean_corrupt,
 )
 if conf.save_cache:
     save_cache(prune_scores, exp_dir, "prune_scores")
 
 
-# In[ ]:
+# In[9]:
 
 
 model_out_train: dict[BatchKey, torch.Tensor] = {
@@ -218,7 +240,7 @@ model_out_test: dict[BatchKey, torch.Tensor] = {
 }
 
 
-# In[ ]:
+# In[10]:
 
 
 equiv_results, min_equiv = sweep_search_smallest_equiv(
@@ -231,20 +253,20 @@ equiv_results, min_equiv = sweep_search_smallest_equiv(
     use_abs=conf.use_abs,
     side=conf.side,
     alpha=conf.alpha,
-    epsilon=conf.side,
+    epsilon=conf.epsilon,
     model_out=model_out_train,
 )
-save_json(result_to_json(equiv_results), exp_dir, "equiv_results.json")
+save_json({k: result_to_json(v) for k, v in equiv_results.items()}, exp_dir, "equiv_results")
 
 
-# In[ ]:
+# In[11]:
 
 
 equiv_test_result = equiv_test(
     model=task.model, 
     dataloader=task.test_loader,
     prune_scores=prune_scores,
-    grad_func=conf.grad_func, 
+    grad_function=conf.grad_func, 
     answer_function=conf.answer_func,
     ablation_type=conf.ablation_type,
     edge_counts=[min_equiv],
@@ -253,19 +275,20 @@ equiv_test_result = equiv_test(
     alpha=conf.alpha,
     epsilon=conf.epsilon,
     model_out=model_out_test
-)
-save_json(result_to_json(equiv_test_result), exp_dir, "equiv_test_result.json")
+)[min_equiv]
+save_json(result_to_json(equiv_test_result), exp_dir, "equiv_test_result")
 
 
-# In[ ]:
+# In[12]:
 
 
 threshold = prune_scores_threshold(prune_scores, min_equiv, use_abs=conf.use_abs)
 edge_mask = {k: (torch.abs(v) if conf.use_abs else v) >= threshold for k, v in prune_scores.items()}
 edges = edges_from_mask(task.model.srcs, task.model.dests, edge_mask, token=task.token_circuit)
+save_json([edge.name for edge in edges], exp_dir, "edges")
 
 
-# In[ ]:
+# In[13]:
 
 
 # contruct a graph from the pruned circuit, to further prune
@@ -274,7 +297,7 @@ node_circ_graph.build_graph()
 assert set(node_circ_graph.parents.keys()) == set([k for k in node_circ_graph.children.keys() if k.name != "Resid Start"])
 
 
-# In[ ]:
+# In[14]:
 
 
 valid_edges = [
@@ -287,17 +310,12 @@ valid_edges = [
     )
 ]
 min_equiv_valid_edges = len(valid_edges)
-min_equiv_valid_edges
-
-
-# In[ ]:
-
-
+save_json([edge.name for edge in valid_edges], exp_dir, "valid_edges")
 # mask out all edges not in edges to dest
-valid_edge_scores = task.model.circuit_prune_scores(valid_edges)
+valid_edge_scores = task.model.circuit_prune_scores(valid_edges) 
 
 
-# In[ ]:
+# In[15]:
 
 
 # from elk_experiments.auto_circuit.circuit_hypotests import equiv_test
@@ -317,23 +335,30 @@ valid_edges_equiv_result = equiv_test(
     alpha=conf.alpha,
     epsilon=conf.epsilon,
 )[min_equiv_valid_edges]
-save_json(result_to_json(valid_edges_equiv_result), exp_dir, "valid_edges_equiv_result.json")
+save_json(result_to_json(valid_edges_equiv_result), exp_dir, "valid_edges_equiv_result")
 
 
-# In[ ]:
+# In[16]:
 
 
-print(torch.topk(valid_edges_equiv_result.circ_scores - equiv_results[len(edges)].circ_scores, 4))
-assert not valid_edges_equiv_result.not_equiv
-assert torch.allclose(valid_edges_equiv_result.circ_scores, equiv_results[len(edges)].circ_scores, atol=1e-1) # should make a function of model size
+# set cicuit under test
+if valid_edges_equiv_result.not_equiv:
+    edges_under_test = edges 
+    circuit_prune_scores = prune_scores
+else: 
+    edges_under_test = valid_edges
+    circuit_prune_scores = valid_edge_scores
+    threshold = 1.0
+edges_under_test_scores = {edge: circuit_prune_scores[edge.dest.module_name][get_edge_idx(edge, tokens=task.token_circuit)] for edge in edges_under_test}
+edges_under_test = sorted(edges_under_test_scores.keys(), key=lambda x: abs(edges_under_test_scores[x]), reverse=False)
 
 
-# In[ ]:
+# In[17]:
 
 
 fig = draw_seq_graph(
     model=task.model,
-    prune_scores=valid_edge_scores,
+    prune_scores=circuit_prune_scores,
     score_threshold=threshold,
     show_all_seq_pos=True,
     orientation="h",
@@ -343,21 +368,42 @@ fig = draw_seq_graph(
 fig.write_image(repo_path_to_abs_path(exp_dir / "valid_edge_graph.png"))
 
 
-# In[ ]:
+# In[18]:
 
 
 fig, ax = plot_num_ablated_C_gt_M(equiv_results, epsilon=conf.epsilon, min_equiv=min_equiv, side="left" if not conf.use_abs else None)
 fig.savefig(repo_path_to_abs_path(exp_dir / "num_ablated_C_gt_M.png"))
 
 
-# In[ ]:
+# In[19]:
 
 
 fig, ax = plot_circuit_and_model_scores(equiv_results, min_equiv)
 fig.savefig(repo_path_to_abs_path(exp_dir / "circuit_model_scores.png"))
 
 
-# In[ ]:
+# In[20]:
+
+
+def plot_edge_scores_and_knees(edge_scores, kneedle_poly, kneedle_1d, min_equiv):
+    fig, ax = plt.subplots()
+    # plot edge scores with x labels max to 0 
+    ax.plot(sorted(edge_scores, reverse=True))
+    ax.set_xlim(len(edge_scores), 0)
+    # log axis 
+    ax.set_yscale('log')
+    # plot knees
+    knee_poly_edge_count = round(len(edge_scores) - kneedle_poly.knee)
+    knee_1d_edge_count = round(len(edge_scores) - kneedle_1d.knee)
+    ax.axvline(knee_poly_edge_count, color='r', linestyle='--', label=f"knee poly={knee_poly_edge_count}")
+    ax.axvline(knee_1d_edge_count, color='g', linestyle='--', label=f"knee 1d={knee_1d_edge_count}")
+    # plot min_equiv 
+    ax.axvline(min_equiv, color='b', linestyle='--', label=f"min equiv={min_equiv}")
+    ax.legend()
+    return fig, ax
+
+
+# In[21]:
 
 
 # plot attribution scores 
@@ -370,15 +416,19 @@ fig, ax = plot_edge_scores_and_knees(edge_scores, kneedle_poly, kneedle_1d, min_
 fig.savefig(repo_path_to_abs_path(exp_dir / "edge_scores_knees.png"))
 
 
-# In[ ]:
+# In[22]:
 
 
-round(len(edge_scores) - kneedle_poly.knee), round(len(edge_scores) - kneedle_1d.knee), min_equiv
+# zoom in to attribution scores
+ax.set_xlim(len(edge_scores) - kneedle_poly.knee + 1,)
+ax.set_yscale('linear')
+fig.savefig(repo_path_to_abs_path(exp_dir / "edge_scores_knees_linear.png"))
+fig
 
 
 # # Minimality Test
 
-# In[ ]:
+# In[23]:
 
 
 # build full grap to sample paths
@@ -386,20 +436,7 @@ node_graph = NodeGraph(task.model.edges, token=task.token_circuit, attn_only=tas
 node_graph.build_graph()
 
 
-# In[ ]:
-
-
-if valid_edges_equiv_result.not_equiv:
-    edges_under_test = edges 
-    edges_under_test_scores = prune_scores
-else: 
-    edges_under_test = valid_edges
-    edges_under_test_scores = valid_edge_scores
-edges_under_test_scores = {edge: edges_under_test[edge.dest.module_name][get_edge_idx(edge, tokens=task.token_circuit)] for edge in edges_under_test}
-edges_under_test = sorted(edges_under_test_scores.keys(), key=lambda x: abs(edges_under_test_scores[x]), reverse=False)
-
-
-# In[ ]:
+# In[24]:
 
 
 # sample paths to be used for testing
@@ -411,15 +448,14 @@ mean_uniform = np.mean([len(path) for path in filtered_paths_uniform])
 mean_walk, mean_uniform
 
 
-# ## Run Minimality Tests
-
-# In[ ]:
+# In[27]:
 
 
+# run minimality test
 min_test_results = minimality_test(
     model=task.model, 
     dataloader=task.test_loader,
-    prune_scores=edges_under_test_scores,
+    prune_scores=circuit_prune_scores,
     edges=edges_under_test, 
     edge_count=len(edges_under_test),
     ablation_type=conf.ablation_type,
@@ -431,16 +467,14 @@ min_test_results = minimality_test(
     alpha=conf.alpha, 
     q_star=conf.q_star
 )
-save_json(result_to_json(min_test_results), exp_dir, "min_test_results.json")
+save_json({e.name: result_to_json(r) for e, r in min_test_results.items()}, exp_dir, "min_test_results")
 
 
-# In[ ]:
+# In[28]:
 
 
 # minimality test on true edges
-true_edge_prune_scores = {mod_name: torch.zeros_like(score_func) for mod_name, score_func in prune_scores.items()}
-for edge in task.true_edges:
-    true_edge_prune_scores[edge.dest.module_name][get_edge_idx(edge, tokens=task.token_circuit)] = 1.0
+true_edge_prune_scores = task.model.circuit_prune_scores(task.true_edges)
 
 filtered_paths_true_edge = sample_paths(node_graph, n_paths, SampleType.WALK, task.true_edges)
 min_test_true_edge_results = minimality_test(
@@ -457,27 +491,28 @@ min_test_true_edge_results = minimality_test(
     tokens=task.token_circuit,
     alpha=conf.alpha, 
     q_star=conf.q_star,
-    stop_if_failed=False
+    stop_if_failed=True
 )
-save_json(result_to_json(min_test_true_edge_results), exp_dir, "min_test_true_edge_results.json")
+save_json({e.name: result_to_json(r) for e, r in min_test_true_edge_results.items()}, exp_dir, "min_test_true_edge_results")
 
 
-# In[ ]:
+# In[29]:
 
 
-fig, ax = plot_p_values(min_test_results, edges_under_test, edges_under_test_scores)
+# plot p values
+fig, ax = plot_p_values(min_test_results, edges_under_test, edges_under_test_scores, alpha=conf.alpha / len(edges_under_test))
 fig.savefig(repo_path_to_abs_path(exp_dir / "min_test_p_values.png"))
 
 
-# In[ ]:
+# In[30]:
 
 
-true_edge_scores = {edge: torch.tensor(1.1) for edge in task.true_edges}
-fig, ax = plot_p_values(min_test_true_edge_results, task.true_edges, true_edge_scores)
+true_edge_scores = {edge: torch.tensor(1.0) for edge in task.true_edges} # don't actually know
+fig, ax = plot_p_values(min_test_true_edge_results, min_test_true_edge_results.keys(), true_edge_scores, alpha=conf.alpha / task.true_edge_count)
 fig.savefig(repo_path_to_abs_path(exp_dir / "min_test_true_edge_p_values.png"))
 
 
-# In[ ]:
+# In[31]:
 
 
 # plot frac of n 
@@ -487,16 +522,16 @@ fix, ax = plot_edge_k(min_test_results, edges_under_test, edges_under_test_score
 fig.savefig(repo_path_to_abs_path(exp_dir / "min_test_edge_k.png"))
 
 
-# In[ ]:
+# In[32]:
 
 
 batch_size = task.batch_size[1] if isinstance(task.batch_size, tuple) else task.batch_size
 batch_count = task.batch_count[1] if isinstance(task.batch_count, tuple) else task.batch_count
-plot_edge_k(min_test_true_edge_results, task.true_edges, true_edge_scores, batch_size * batch_count, q_star=conf.q_star)
+plot_edge_k(min_test_true_edge_results, min_test_true_edge_results.keys(), true_edge_scores, batch_size * batch_count, q_star=conf.q_star)
 fig.savefig(repo_path_to_abs_path(exp_dir / "min_test_true_edge_k.png"))
 
 
-# In[ ]:
+# In[33]:
 
 
 # plot average diff 
@@ -504,10 +539,10 @@ fit, ax = plot_score_quantiles(min_test_results, edges_under_test, edges_under_t
 fig.savefig(repo_path_to_abs_path(exp_dir / "min_test_score_quantiles.png"))
 
 
-# In[ ]:
+# In[34]:
 
 
-fit, ax = plot_score_quantiles(min_test_true_edge_results, task.true_edges, true_edge_scores, quantile_range=[0.00, 1.00])
+fit, ax = plot_score_quantiles(min_test_true_edge_results, min_test_true_edge_results.keys(), true_edge_scores, quantile_range=[0.00, 1.00])
 fig.savefig(repo_path_to_abs_path(exp_dir / "min_test_true_edge_score_quantiles.png"))
 
 
@@ -536,35 +571,53 @@ fig.savefig(repo_path_to_abs_path(exp_dir / "min_test_true_edge_score_quantiles.
 # 
 # 
 
-# In[ ]:
+# In[36]:
+
+
+from typing import Callable, Dict, Tuple, Union, Optional, Any, Literal, NamedTuple
+from itertools import product
+from copy import deepcopy
+import random
+import math
+
+import torch 
+import numpy as np
+from scipy.stats import binom, beta
+from sklearn.metrics.pairwise import rbf_kernel
+from sklearn.preprocessing import KernelCenterer
+
+
+# In[38]:
 
 
 indep_result = independence_test(
     model=task.model, 
     dataloader=task.test_loader, 
-    prune_scores=edges_under_test_scores, 
+    prune_scores=circuit_prune_scores, 
+    ablation_type=conf.ablation_type,
     grad_function=conf.grad_func,
     answer_function=conf.answer_func,
     threshold=threshold, 
     use_abs=conf.use_abs,
     B=1000
 ) 
-save_json(result_to_json(indep_result), exp_dir, "indep_result.json")
+save_json(result_to_json(indep_result), exp_dir, "indep_result")
 
 
-# In[ ]:
+# In[39]:
 
 
 indep_true_edge_result = independence_test(
     task.model, 
     task.test_loader, 
     true_edge_prune_scores, 
+    ablation_type=conf.ablation_type,
     grad_function=conf.grad_func,
     answer_function=conf.answer_func,
-    threshold=0.9, 
+    threshold=1.0, 
     use_abs=True,
     alpha=conf.alpha,
     B=1000
 )
-save_json(result_to_json(indep_true_edge_result), exp_dir, "indep_true_edge_result.json")
+save_json(result_to_json(indep_true_edge_result), exp_dir, "indep_true_edge_result")
 

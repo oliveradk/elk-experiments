@@ -81,7 +81,7 @@ def run_non_equiv_test(
         left_tail = binom.cdf(min(n-k, k), n, theta)
         right_tail = 1 - binom.cdf(max(n-k, k), n, theta)
         p_value = left_tail + right_tail
-    return p_value < alpha, p_value 
+    return bool(p_value < alpha), p_value 
 
 def bernoulli_range_test(K,N,eps=0.1,a=[1,1],alpha=0.5):
     #Inputs:
@@ -408,10 +408,10 @@ def plot_edge_scores_and_knees(edge_scores, kneedle_poly, kneedle_1d, min_equiv)
     ax.plot(edge_scores)
     # log axis 
     ax.set_yscale('log')
-    ax.axvline(kneedle_poly.knee, color='r', linestyle='--', label="knee poly")
-    ax.axvline(kneedle_1d.knee, color='g', linestyle='--', label="knee 1d")
+    ax.axvline(kneedle_poly.knee, color='r', linestyle='--', label=f"knee poly={kneedle_poly.knee}")
+    ax.axvline(kneedle_1d.knee, color='g', linestyle='--', label=f"knee 1d={kneedle_1d.knee}")
     # plot min_equiv 
-    ax.axvline(len(edge_scores) - min_equiv, color='b', linestyle='--', label="min equiv")
+    ax.axvline(len(edge_scores) - min_equiv, color='b', linestyle='--', label=f"min equiv={min_equiv}")
     ax.legend()
     return fig, ax
 
@@ -481,8 +481,8 @@ class MinResult(NamedTuple):
     not_minimal: bool
     p_value: float
     num_edge_score_gt_ref: int
-    diffs: list[torch.Tensor]
-    diffs_inflated: list[torch.Tensor]
+    diffs: torch.Tensor
+    diffs_inflated: torch.Tensor
 
 
 def minimality_test( #TODO: seperate infalted circuit seperate from dataset, get higher n 
@@ -657,16 +657,18 @@ def minimality_test_edge(
         diffs_inflated.append(circ_inflated_diff.detach().cpu())
         n += bs
     
-    p_value = binom.cdf(num_edge_score_gt_ref, n, q_star)
-    return MinResult(alpha < p_value, p_value, num_edge_score_gt_ref, diffs, diffs_inflated)
+    p_value = binom.cdf(num_edge_score_gt_ref, n, q_star) # null is minimality p value < alpha -> not minimal 
+    diffs = torch.cat(diffs)
+    diffs_inflated = torch.cat(diffs_inflated)
+    return MinResult(bool(p_value < alpha), p_value, num_edge_score_gt_ref, diffs, diffs_inflated)
 
-def plot_p_values(min_results: dict[Edge, MinResult], edges: list[Edge], edge_scores: dict[Edge, torch.Tensor]):
+def plot_p_values(min_results: dict[Edge, MinResult], edges: list[Edge], edge_scores: dict[Edge, torch.Tensor], alpha: float = 0.05):
     fig, ax = plt.subplots(figsize=(12, 2))
     p_values = [min_results[edge].p_value for edge in edges]
     neg_edge = [edge_scores[edge].cpu() < 0 for edge in edges]
     ax.scatter(range(len(p_values)), p_values, c=neg_edge, cmap='coolwarm')
     # plot alpha line 
-    ax.axhline(y=0.05, color='g', linestyle='-')
+    ax.axhline(y=alpha, color='g', linestyle='-')
     ax.set_title("p values for minimality test")
     return fig, ax
 
@@ -694,22 +696,22 @@ def plot_score_quantiles(
 ):
     # calculate quantiles 
     quantiles = [
-        np.quantile(torch.cat(min_results[edge][3]).numpy(), quantile_range) 
+        np.quantile(min_results[edge].diffs.numpy(), quantile_range) 
         for edge in edges
     ]
     lower_quantiles = [q[0] for q in quantiles]
     upper_quantiles = [q[1] for q in quantiles]
 
     # compute mean and quartiles of diff inflated
-    diff_infl = torch.cat([torch.cat(min_results[edge][4]) for edge in edges])
+    diff_infl = torch.cat([min_results[edge].diffs_inflated for edge in edges])
     quantile_infl = np.quantile(diff_infl.numpy(), quantile_range)
     mean_infl = diff_infl.mean().numpy()
     median_infl = diff_infl.median().numpy()
 
     # plot average diff with quantile ranges
     fig, ax = plt.subplots(figsize=(12, 4))
-    diffs = [torch.cat(min_results[edge][3]).mean().numpy() for edge in edges]
-    median_diffs = [torch.cat(min_results[edge][3]).median().numpy() for edge in edges]
+    diffs = [min_results[edge].diffs.mean().numpy() for edge in edges]
+    median_diffs = [min_results[edge].diffs.median().numpy() for edge in edges]
 
     # Plot error bars with quantile ranges, median, and mean
     ax.errorbar(range(len(diffs)), diffs, 
@@ -795,9 +797,11 @@ def independence_test(
     for batch in dataloader:
         m_scores.append(score_func(m_out[batch.key], batch)) # supposed to be looking at all output #TODO
         c_comp_scores.append(score_func(c_comp_out[batch.key], batch))
-    m_scores = torch.cat(m_scores)[:, None].detach().cpu().numpy()
-    c_comp_scores = torch.cat(c_comp_scores)[:, None].detach().cpu().numpy()
+    m_scores = torch.cat(m_scores)[:, None].detach().cpu()
+    c_comp_scores = torch.cat(c_comp_scores)[:, None].detach().cpu()
     sigma = torch.cdist(m_scores, c_comp_scores, p=2).median().item()
+    m_scores = m_scores.numpy()
+    c_comp_scores = c_comp_scores.numpy()
 
     # compute t_obs
     t_obs = hsic(m_scores, c_comp_scores, gamma=sigma)
@@ -814,7 +818,7 @@ def independence_test(
         t += t_obs < t_i
     # p value = t / B
     p_value = t / B
-    return IndepResults(not_indep=p_value < alpha, p_value=p_value)
+    return IndepResults(not_indep=bool(p_value < alpha), p_value=p_value)
 
 
 def result_to_json(result: NamedTuple): 
