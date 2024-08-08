@@ -5,7 +5,7 @@ from auto_circuit.metrics.official_circuits.circuits.ioi_official import (
 )
 
 DOCSTRING_PYTHIA_70M_AUTOENCODER_COMPONENT_CIRCUIT_TASK: Task = Task(
-    key="Docstring Component Circuit",
+    key="Docstring Autoencoder Component Circuit",
     name="Docstring",
     _model_def="pythia-70m-deduped",
     _dataset_name="docstring_prompts",

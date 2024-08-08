@@ -3,6 +3,7 @@ from itertools import product
 from copy import deepcopy
 import random
 import math
+from enum import Enum
 
 import torch 
 import numpy as np
@@ -32,6 +33,12 @@ from auto_circuit.utils.custom_tqdm import tqdm
 from elk_experiments.auto_circuit.auto_circuit_utils import run_circuits, load_tf_model, prune_scores_threshold
 from elk_experiments.auto_circuit.score_funcs import GradFunc, AnswerFunc, get_score_func
 from elk_experiments.auto_circuit.node_graph import NodeGraph, sample_paths, SampleType
+
+
+class Side(Enum): 
+    LEFT = "left"
+    RIGHT = "right"
+    NONE = "none"
 
 
 
@@ -66,13 +73,13 @@ def run_non_equiv_test(
     n: int, 
     alpha: float = 0.05, 
     epsilon: float = 0.1, 
-    side: Optional[Literal["left", "right"]] = None
+    side: Side = Side.NONE
 ) -> tuple[bool, float]:
     k = num_ablated_C_gt_M
-    if side == "left": # binomial test for p_success < 0.5 - epsilon
+    if side == Side.LEFT: # binomial test for p_success < 0.5 - epsilon
         theta = 1 / 2 - epsilon
         p_value = binom.cdf(k, n, theta)
-    elif side == "right": # binomail test for p_success > 0.5 + epsilon (typically don't use)
+    elif side == Side.RIGHT: # binomail test for p_success > 0.5 + epsilon (typically don't use)
         theta = 1 / 2 + epsilon
         p_value = 1 - binom.cdf(k, n, theta)
     else: # standard two-tailed test from the paper
@@ -118,7 +125,7 @@ def equiv_test(
     use_abs: bool = True,
     model_out: Optional[Dict[BatchKey, torch.Tensor]] = None,
     full_model: Optional[torch.nn.Module] = None,
-    side: Optional[Literal["left", "right"]] = None,
+    side: Side = Side.NONE,
     alpha: float = 0.05,
     epsilon: float = 0.1,
 ) -> Dict[int, EquivResult]:
@@ -168,7 +175,7 @@ def sweep_search_smallest_equiv(
     answer_function: AnswerFunc,
     ablation_type: AblationType, 
     use_abs: bool = True,
-    side: Optional[Literal["left", "right"]] = None,
+    side: Side = Side.NONE,
     alpha: float = 0.05,
     epsilon: float = 0.1,
     model_out: Optional[Dict[BatchKey, torch.Tensor]] = None,
@@ -230,7 +237,7 @@ def bin_search_smallest_equiv(
     answer_function: AnswerFunc,
     ablation_type: AblationType, 
     use_abs: bool = True,
-    side: Optional[Literal["left", "right"]] = None,
+    side: Side = Side.NONE,
     alpha: float = 0.05,
     epsilon: float = 0.1,
 ):
@@ -274,7 +281,7 @@ def plot_num_ablated_C_gt_M(
         results: Dict[int, Any], 
         min_equiv: int, 
         epsilon: float = 0.1, 
-        side: Optional[Literal["left", "right"]]=None
+        side: Side = Side.NONE
     ) -> Tuple[plt.Figure, plt.Axes]:
     if not -1 < epsilon < 1:
         raise ValueError("epsilon must be a float between -1 and 1 (exclusive)")
@@ -298,7 +305,7 @@ def plot_num_ablated_C_gt_M(
 
     # Create horizontal lines for N, N/2, and N/2 ± epsilon * N
     ax.plot(x, ns, label='N', color='k', linestyle='-', linewidth=2)
-    if side == None:
+    if side == Side.NONE:
         ax.plot(x, [n/2 for n in ns], label='N/2', color='r', linestyle='--', linewidth=2)
         ax.plot(x, [n/2 + epsilon*n for n in ns], label=f'N/2 + {epsilon}N', color='m', linestyle=':', linewidth=2)
         ax.plot(x, [n/2 - epsilon*n for n in ns], label=f'N/2 - {epsilon}N', color='c', linestyle=':', linewidth=2)
@@ -307,7 +314,7 @@ def plot_num_ablated_C_gt_M(
                     [n/2 - epsilon*n for n in ns], 
                     [n/2 + epsilon*n for n in ns], 
                     alpha=0.2, color='y', label=f'N/2 ± {epsilon}N range')
-    elif side == "left":
+    elif side == Side.LEFT:
         ax.plot(x, [n/2 - epsilon*n for n in ns], label=f'N/2 - {epsilon}N', color='r', linestyle=':', linewidth=2)
         # Fill the area between N/2 - epsilon * N and N
         ax.fill_between(x,
@@ -405,16 +412,23 @@ def compute_knees(edge_scores):
 
 def plot_edge_scores_and_knees(edge_scores, kneedle_poly, kneedle_1d, min_equiv):
     fig, ax = plt.subplots()
-    ax.plot(edge_scores)
+    # plot edge scores with x labels max to 0 
+    ax.plot(sorted(edge_scores, reverse=True))
+    ax.set_xlim(len(edge_scores), 0)
     # log axis 
     ax.set_yscale('log')
-    ax.axvline(kneedle_poly.knee, color='r', linestyle='--', label=f"knee poly={kneedle_poly.knee}")
-    ax.axvline(kneedle_1d.knee, color='g', linestyle='--', label=f"knee 1d={kneedle_1d.knee}")
+    # plot knees
+    knee_poly_edge_count = round(len(edge_scores) - kneedle_poly.knee)
+    knee_1d_edge_count = round(len(edge_scores) - kneedle_1d.knee)
+    ax.axvline(knee_poly_edge_count, color='r', linestyle='--', label=f"knee poly={knee_poly_edge_count}")
+    ax.axvline(knee_1d_edge_count, color='g', linestyle='--', label=f"knee 1d={knee_1d_edge_count}")
     # plot min_equiv 
-    ax.axvline(len(edge_scores) - min_equiv, color='b', linestyle='--', label=f"min equiv={min_equiv}")
+    ax.axvline(min_equiv, color='b', linestyle='--', label=f"min equiv={min_equiv}")
     ax.legend()
+    ax.set_title("Edge Scores and Knees")
+    ax.set_xlabel("Edge Count")
+    ax.set_ylabel("Edge Score")
     return fig, ax
-
 
 
 
@@ -666,7 +680,8 @@ def plot_p_values(min_results: dict[Edge, MinResult], edges: list[Edge], edge_sc
     fig, ax = plt.subplots(figsize=(12, 2))
     p_values = [min_results[edge].p_value for edge in edges]
     neg_edge = [edge_scores[edge].cpu() < 0 for edge in edges]
-    ax.scatter(range(len(p_values)), p_values, c=neg_edge, cmap='coolwarm')
+    ax.scatter(range(len(p_values), 0, -1), p_values, c=neg_edge, cmap='coolwarm')
+    ax.set_xlim(len(edges), 0)
     # plot alpha line 
     ax.axhline(y=alpha, color='g', linestyle='-')
     ax.set_title("p values for minimality test")
@@ -677,7 +692,8 @@ def plot_edge_k(min_results: dict[Edge, MinResult], edges: list[Edge], edge_scor
     ks = [min_results[edge][2] for edge in edges]
     neg_edge = [edge_scores[edge].cpu() < 0 for edge in edges]
     # scatter with blue as positive, red as negative
-    ax.scatter(range(len(ks)), ks, c=neg_edge, cmap='coolwarm')
+    ax.scatter(range(len(ks), 0, -1), ks, c=neg_edge, cmap='coolwarm')
+    ax.set_xlim(len(ks), 0)
     # horizontal line at  
     ax.axhline(y=n // 2, color='g', linestyle='--', label=f"N / 2")
     # horizeontal line at n * q_star
@@ -714,15 +730,17 @@ def plot_score_quantiles(
     median_diffs = [min_results[edge].diffs.median().numpy() for edge in edges]
 
     # Plot error bars with quantile ranges, median, and mean
-    ax.errorbar(range(len(diffs)), diffs, 
+    ax.errorbar(range(len(diffs), 0, -1), diffs, 
                 yerr=[np.array(diffs) - lower_quantiles, upper_quantiles - np.array(diffs)],
                 fmt='none', capsize=5, capthick=1)
 
     # Add median points in orange
-    ax.scatter(range(len(median_diffs)), median_diffs, color='orange', marker='s', s=30, label='Median', zorder=3)
+    ax.scatter(range(len(median_diffs), 0, -1), median_diffs, color='orange', marker='s', s=30, label='Median', zorder=3)
 
     # Add mean points in green
-    ax.scatter(range(len(diffs)), diffs, color='green', marker='o', s=30, label='Mean', zorder=3)
+    ax.scatter(range(len(diffs), 0, -1), diffs, color='green', marker='o', s=30, label='Mean', zorder=3)
+
+    ax.set_xlim(len(diffs), 0)
 
     # inflated mean and median lines
     ax.axhline(y=mean_infl, color='g', linestyle='-')

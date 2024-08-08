@@ -96,6 +96,7 @@ from elk_experiments.auto_circuit.auto_circuit_utils import (
 from elk_experiments.auto_circuit.score_funcs import GradFunc, AnswerFunc, get_score_func
 
 from elk_experiments.auto_circuit.circuit_hypotests import (
+    Side,
     get_edge_idx, 
     edges_from_mask,
     equiv_test,
@@ -144,7 +145,7 @@ class Config:
     grad_func_mask: Optional[Union[GradFunc, str]] = None
     answer_func_mask: Optional[Union[AnswerFunc, str]] = None
     clean_corrupt: Optional[str] = None #TODO: make enum
-    side: Optional[str] = None # TODO: make enum
+    side: Optional[Union[Side, str]] = None # TODO: make enum
     save_cache: bool = True
     
     def __post_init__(self):
@@ -170,10 +171,10 @@ class Config:
             self.answer_func_mask = self.answer_func
         if self.clean_corrupt is None:
             self.clean_corrupt = "corrupt" if self.ablation_type == AblationType.RESAMPLE else None
+        if isinstance(self.side, str):
+            self.side = Side[self.side.upper()]
         if self.side is None:
-            self.side = None if self.use_abs else "left" 
-        elif self.side == "none":
-            self.side = None
+            self.side = Side.NONE if self.use_abs else Side.LEFT
 
 
 # In[5]:
@@ -184,7 +185,8 @@ conf = Config()
 # get config overrides if runnign from command line
 if not is_notebook():
     import sys 
-    conf = OmegaConf.merge(OmegaConf.structured(conf), OmegaConf.from_cli(sys.argv[1:]))
+    conf_dict = OmegaConf.merge(OmegaConf.structured(conf), OmegaConf.from_cli(sys.argv[1:]))
+    conf = Config(**conf_dict)
 
 
 # In[6]:
@@ -338,7 +340,7 @@ valid_edges_equiv_result = equiv_test(
 save_json(result_to_json(valid_edges_equiv_result), exp_dir, "valid_edges_equiv_result")
 
 
-# In[16]:
+# In[38]:
 
 
 # set cicuit under test
@@ -349,7 +351,7 @@ else:
     edges_under_test = valid_edges
     circuit_prune_scores = valid_edge_scores
     threshold = 1.0
-edges_under_test_scores = {edge: circuit_prune_scores[edge.dest.module_name][get_edge_idx(edge, tokens=task.token_circuit)] for edge in edges_under_test}
+edges_under_test_scores = {edge: prune_scores[edge.dest.module_name][get_edge_idx(edge, tokens=task.token_circuit)] for edge in edges_under_test}
 edges_under_test = sorted(edges_under_test_scores.keys(), key=lambda x: abs(edges_under_test_scores[x]), reverse=False)
 
 
@@ -363,47 +365,27 @@ fig = draw_seq_graph(
     show_all_seq_pos=True,
     orientation="h",
     use_abs=False,
+    display_ipython=is_notebook(),
     seq_labels=task.test_loader.seq_labels,
 )
 fig.write_image(repo_path_to_abs_path(exp_dir / "valid_edge_graph.png"))
 
 
-# In[18]:
+# In[19]:
 
 
-fig, ax = plot_num_ablated_C_gt_M(equiv_results, epsilon=conf.epsilon, min_equiv=min_equiv, side="left" if not conf.use_abs else None)
+fig, ax = plot_num_ablated_C_gt_M(equiv_results, epsilon=conf.epsilon, min_equiv=min_equiv, side=conf.side)
 fig.savefig(repo_path_to_abs_path(exp_dir / "num_ablated_C_gt_M.png"))
 
 
-# In[19]:
+# In[20]:
 
 
 fig, ax = plot_circuit_and_model_scores(equiv_results, min_equiv)
 fig.savefig(repo_path_to_abs_path(exp_dir / "circuit_model_scores.png"))
 
 
-# In[20]:
-
-
-def plot_edge_scores_and_knees(edge_scores, kneedle_poly, kneedle_1d, min_equiv):
-    fig, ax = plt.subplots()
-    # plot edge scores with x labels max to 0 
-    ax.plot(sorted(edge_scores, reverse=True))
-    ax.set_xlim(len(edge_scores), 0)
-    # log axis 
-    ax.set_yscale('log')
-    # plot knees
-    knee_poly_edge_count = round(len(edge_scores) - kneedle_poly.knee)
-    knee_1d_edge_count = round(len(edge_scores) - kneedle_1d.knee)
-    ax.axvline(knee_poly_edge_count, color='r', linestyle='--', label=f"knee poly={knee_poly_edge_count}")
-    ax.axvline(knee_1d_edge_count, color='g', linestyle='--', label=f"knee 1d={knee_1d_edge_count}")
-    # plot min_equiv 
-    ax.axvline(min_equiv, color='b', linestyle='--', label=f"min equiv={min_equiv}")
-    ax.legend()
-    return fig, ax
-
-
-# In[21]:
+# In[26]:
 
 
 # plot attribution scores 
@@ -416,19 +398,20 @@ fig, ax = plot_edge_scores_and_knees(edge_scores, kneedle_poly, kneedle_1d, min_
 fig.savefig(repo_path_to_abs_path(exp_dir / "edge_scores_knees.png"))
 
 
-# In[22]:
+# In[28]:
 
 
 # zoom in to attribution scores
 ax.set_xlim(len(edge_scores) - kneedle_poly.knee + 1,)
 ax.set_yscale('linear')
+ax.set_title("Edge Scores and Knees (Linear Scale)")
 fig.savefig(repo_path_to_abs_path(exp_dir / "edge_scores_knees_linear.png"))
 fig
 
 
 # # Minimality Test
 
-# In[23]:
+# In[29]:
 
 
 # build full grap to sample paths
@@ -436,7 +419,7 @@ node_graph = NodeGraph(task.model.edges, token=task.token_circuit, attn_only=tas
 node_graph.build_graph()
 
 
-# In[24]:
+# In[31]:
 
 
 # sample paths to be used for testing
@@ -448,7 +431,7 @@ mean_uniform = np.mean([len(path) for path in filtered_paths_uniform])
 mean_walk, mean_uniform
 
 
-# In[27]:
+# In[32]:
 
 
 # run minimality test
@@ -470,7 +453,7 @@ min_test_results = minimality_test(
 save_json({e.name: result_to_json(r) for e, r in min_test_results.items()}, exp_dir, "min_test_results")
 
 
-# In[28]:
+# In[33]:
 
 
 # minimality test on true edges
@@ -496,7 +479,7 @@ min_test_true_edge_results = minimality_test(
 save_json({e.name: result_to_json(r) for e, r in min_test_true_edge_results.items()}, exp_dir, "min_test_true_edge_results")
 
 
-# In[29]:
+# In[44]:
 
 
 # plot p values
@@ -504,7 +487,7 @@ fig, ax = plot_p_values(min_test_results, edges_under_test, edges_under_test_sco
 fig.savefig(repo_path_to_abs_path(exp_dir / "min_test_p_values.png"))
 
 
-# In[30]:
+# In[45]:
 
 
 true_edge_scores = {edge: torch.tensor(1.0) for edge in task.true_edges} # don't actually know
@@ -512,17 +495,17 @@ fig, ax = plot_p_values(min_test_true_edge_results, min_test_true_edge_results.k
 fig.savefig(repo_path_to_abs_path(exp_dir / "min_test_true_edge_p_values.png"))
 
 
-# In[31]:
+# In[47]:
 
 
 # plot frac of n 
 batch_size = task.batch_size[1] if isinstance(task.batch_size, tuple) else task.batch_size
 batch_count = task.batch_count[1] if isinstance(task.batch_count, tuple) else task.batch_count
-fix, ax = plot_edge_k(min_test_results, edges_under_test, edges_under_test_scores, batch_size * batch_count, q_star=conf.q_star)
+fig, ax = plot_edge_k(min_test_results, edges_under_test, edges_under_test_scores, batch_size * batch_count, q_star=conf.q_star)
 fig.savefig(repo_path_to_abs_path(exp_dir / "min_test_edge_k.png"))
 
 
-# In[32]:
+# In[48]:
 
 
 batch_size = task.batch_size[1] if isinstance(task.batch_size, tuple) else task.batch_size
@@ -531,7 +514,7 @@ plot_edge_k(min_test_true_edge_results, min_test_true_edge_results.keys(), true_
 fig.savefig(repo_path_to_abs_path(exp_dir / "min_test_true_edge_k.png"))
 
 
-# In[33]:
+# In[51]:
 
 
 # plot average diff 
@@ -539,7 +522,7 @@ fit, ax = plot_score_quantiles(min_test_results, edges_under_test, edges_under_t
 fig.savefig(repo_path_to_abs_path(exp_dir / "min_test_score_quantiles.png"))
 
 
-# In[34]:
+# In[52]:
 
 
 fit, ax = plot_score_quantiles(min_test_true_edge_results, min_test_true_edge_results.keys(), true_edge_scores, quantile_range=[0.00, 1.00])
@@ -571,23 +554,7 @@ fig.savefig(repo_path_to_abs_path(exp_dir / "min_test_true_edge_score_quantiles.
 # 
 # 
 
-# In[36]:
-
-
-from typing import Callable, Dict, Tuple, Union, Optional, Any, Literal, NamedTuple
-from itertools import product
-from copy import deepcopy
-import random
-import math
-
-import torch 
-import numpy as np
-from scipy.stats import binom, beta
-from sklearn.metrics.pairwise import rbf_kernel
-from sklearn.preprocessing import KernelCenterer
-
-
-# In[38]:
+# In[ ]:
 
 
 indep_result = independence_test(
@@ -604,7 +571,7 @@ indep_result = independence_test(
 save_json(result_to_json(indep_result), exp_dir, "indep_result")
 
 
-# In[39]:
+# In[ ]:
 
 
 indep_true_edge_result = independence_test(
