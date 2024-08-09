@@ -450,36 +450,41 @@ save_json({e.name: result_to_json(r) for e, r in min_test_results.items()}, exp_
 save_json({e.name: result_to_json(r) for e, r in min_test_sampled_results.items()}, exp_dir, "min_test_sampled_results")
 
 
-# In[96]:
+# In[141]:
 
 
 # minimality test on true edges
-true_edge_prune_scores = task.model.circuit_prune_scores(task.true_edges)
+min_postfix = f"{conf.q_star}_{conf.alpha}"
+min_postfix_full = f"{conf.max_edges_to_test_in_order}_{min_postfix}"
+# check if already tested 
+true_edges_tested = (score_dir / f"min_test_true_edge_results_{min_postfix_full}.json").exists() and not is_notebook()
 
-filtered_paths_true_edge = sample_paths(node_graph, n_paths, SampleType.WALK, task.true_edges)
-min_test_true_edge_results, min_test_true_edge_sampled_results = minimality_test(
-    model=task.model, 
-    dataloader=task.test_loader,
-    prune_scores=true_edge_prune_scores,
-    edges=list(task.true_edges), 
-    edge_count=task.true_edge_count,
-    ablation_type=conf.ablation_type,
-    grad_function=conf.grad_func,
-    answer_function=conf.answer_func,
-    filtered_paths=filtered_paths_true_edge,
-    use_abs=conf.use_abs,
-    tokens=task.token_circuit,
-    alpha=conf.alpha, 
-    q_star=conf.q_star,
-    stop_if_failed=False, 
-    max_edges_in_order=conf.max_edges_to_test_in_order,
-    max_edges_to_sample=conf.max_edges_to_sample,
-)
-save_json({e.name: result_to_json(r) for e, r in min_test_true_edge_results.items()}, exp_dir, "min_test_true_edge_results")
-save_json({e.name: result_to_json(r) for e, r in min_test_true_edge_sampled_results.items()}, exp_dir, "min_test_true_edge_sampled_results")
+if not true_edges_tested:
+    true_edge_prune_scores = task.model.circuit_prune_scores(task.true_edges)
+    filtered_paths_true_edge = sample_paths(node_graph, n_paths, SampleType.WALK, task.true_edges)
+    min_test_true_edge_results, min_test_true_edge_sampled_results = minimality_test(
+        model=task.model, 
+        dataloader=task.test_loader,
+        prune_scores=true_edge_prune_scores,
+        edges=list(task.true_edges), 
+        edge_count=task.true_edge_count,
+        ablation_type=conf.ablation_type,
+        grad_function=conf.grad_func,
+        answer_function=conf.answer_func,
+        filtered_paths=filtered_paths_true_edge,
+        use_abs=conf.use_abs,
+        tokens=task.token_circuit,
+        alpha=conf.alpha, 
+        q_star=conf.q_star,
+        stop_if_failed=False, 
+        max_edges_in_order=conf.max_edges_to_test_in_order,
+        max_edges_to_sample=conf.max_edges_to_sample,
+    )
+    save_json({e.name: result_to_json(r) for e, r in min_test_true_edge_results.items()}, score_dir, f"min_test_true_edge_results_{min_postfix_full}")
+    save_json({e.name: result_to_json(r) for e, r in min_test_true_edge_sampled_results.items()}, score_dir, f"min_test_true_edge_sampled_results_{conf.max_edges_to_sample}_{min_postfix}")
 
 
-# In[140]:
+# In[142]:
 
 
 # plot p values``
@@ -487,15 +492,16 @@ fig, ax = plot_p_values(min_test_results, edges_under_test_scores, alpha=conf.al
 fig.savefig(repo_path_to_abs_path(exp_dir / "min_test_p_values.png"))
 
 
-# In[98]:
+# In[143]:
 
 
-true_edge_scores = {edge: torch.tensor(1.0) for edge in task.true_edges} # don't actually know
-fig, ax = plot_p_values(min_test_true_edge_results, true_edge_scores, alpha=conf.alpha / task.true_edge_count)
-fig.savefig(repo_path_to_abs_path(exp_dir / "min_test_true_edge_p_values.png"))
+if not true_edges_tested:
+    true_edge_scores = {edge: torch.tensor(1.0) for edge in task.true_edges} # don't actually know
+    fig, ax = plot_p_values(min_test_true_edge_results, true_edge_scores, alpha=conf.alpha / task.true_edge_count)
+    fig.savefig(repo_path_to_abs_path(score_dir / f"min_test_true_edge_p_values_{min_postfix_full}.png"))
 
 
-# In[99]:
+# In[144]:
 
 
 # plot frac of n 
@@ -505,28 +511,30 @@ fig, ax = plot_edge_k(min_test_results, edges_under_test_scores, batch_size * ba
 fig.savefig(repo_path_to_abs_path(exp_dir / "min_test_edge_k.png"))
 
 
-# In[100]:
+# In[145]:
 
 
-batch_size = task.batch_size[1] if isinstance(task.batch_size, tuple) else task.batch_size
-batch_count = task.batch_count[1] if isinstance(task.batch_count, tuple) else task.batch_count
-fig, ax = plot_edge_k(min_test_true_edge_results, true_edge_scores, batch_size * batch_count, q_star=conf.q_star)
-fig.savefig(repo_path_to_abs_path(exp_dir / "min_test_true_edge_k.png"))
+if not true_edges_tested:
+    batch_size = task.batch_size[1] if isinstance(task.batch_size, tuple) else task.batch_size
+    batch_count = task.batch_count[1] if isinstance(task.batch_count, tuple) else task.batch_count
+    fig, ax = plot_edge_k(min_test_true_edge_results, true_edge_scores, batch_size * batch_count, q_star=conf.q_star)
+    fig.savefig(repo_path_to_abs_path(score_dir / f"min_test_true_edge_k_{min_postfix_full}.png"))
 
 
-# In[101]:
+# In[146]:
 
 
 # plot average diff 
 fig, ax = plot_score_quantiles(min_test_results, edges_under_test_scores, quantile_range=[0.00, 1.00])
-fig.savefig(repo_path_to_abs_path(exp_dir / "min_test_score_quantiles.png"))
+fig.savefig(repo_path_to_abs_path(exp_dir / f"min_test_score_quantiles.png"))
 
 
-# In[102]:
+# In[147]:
 
 
-fig, ax = plot_score_quantiles(min_test_true_edge_results, true_edge_scores, quantile_range=[0.00, 1.00])
-fig.savefig(repo_path_to_abs_path(exp_dir / "min_test_true_edge_score_quantiles.png"))
+if not true_edges_tested:
+    fig, ax = plot_score_quantiles(min_test_true_edge_results, true_edge_scores, quantile_range=[0.00, 1.00])
+    fig.savefig(repo_path_to_abs_path(score_dir / f"min_test_true_edge_score_quantiles_{min_postfix_full}.png"))
 
 
 # # Independence Test
@@ -554,7 +562,7 @@ fig.savefig(repo_path_to_abs_path(exp_dir / "min_test_true_edge_score_quantiles.
 # 
 # 
 
-# In[ ]:
+# In[148]:
 
 
 indep_result = independence_test(
@@ -571,7 +579,7 @@ indep_result = independence_test(
 save_json(result_to_json(indep_result), exp_dir, "indep_result")
 
 
-# In[ ]:
+# In[149]:
 
 
 indep_true_edge_result = independence_test(
@@ -586,5 +594,5 @@ indep_true_edge_result = independence_test(
     alpha=conf.alpha,
     B=1000
 )
-save_json(result_to_json(indep_true_edge_result), exp_dir, "indep_true_edge_result")
+save_json(result_to_json(indep_true_edge_result), score_dir, f"indep_true_edge_result")
 
