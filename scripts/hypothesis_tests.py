@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
+# In[2]:
 
 
 # set cuda visible devices
@@ -19,12 +19,12 @@ def is_notebook() -> bool:
 
 import os
 if is_notebook():
-    os.environ["CUDA_VISIBLE_DEVICES"] = "7" #"1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1" #"1"
     # os.environ['CUDA_LAUNCH_BLOCKING']="1"
     # os.environ['TORCH_USE_CUDA_DSA'] = "1"
 
 
-# In[2]:
+# In[3]:
 
 
 import torch 
@@ -44,7 +44,7 @@ torch.cuda.is_available()
 
 # #  Minimal Faithful Circuit According to Prune Score Ordering
 
-# In[3]:
+# In[4]:
 
 
 import os
@@ -78,8 +78,6 @@ from elk_experiments.auto_circuit.score_funcs import GradFunc, AnswerFunc
 
 from elk_experiments.auto_circuit.hypo_tests.equiv_test import (
     Side,
-    get_edge_idx, 
-    edges_from_mask,
     equiv_test,
     sweep_search_smallest_equiv,
     plot_num_ablated_C_gt_M, 
@@ -97,7 +95,6 @@ from elk_experiments.auto_circuit.hypo_tests.indep_test import independence_test
 from elk_experiments.auto_circuit.hypo_tests.utils import (
     get_edge_idx, 
     edges_from_mask, 
-    set_score,
     result_to_json
 )
 from elk_experiments.auto_circuit.node_graph import (
@@ -114,15 +111,15 @@ from elk_experiments.auto_circuit.tasks import TASK_DICT
 from elk_experiments.utils import OUTPUT_DIR, repo_path_to_abs_path, load_cache, save_cache, save_json
 
 
-# In[103]:
+# In[13]:
 
 
 # config class
 @dataclass 
 class Config: 
-    task: str = "Docstring Token Circuit"
+    task: str = "Docstring Component Circuit"
     use_abs: bool = False
-    ablation_type: Union[AblationType, str] = AblationType.TOKENWISE_MEAN_CORRUPT 
+    ablation_type: Union[AblationType, str] = AblationType.TOKENWISE_MEAN_CORRUPT
     grad_func: Optional[Union[GradFunc, str]] = None
     answer_func: Optional[Union[AnswerFunc, str]] = None
     ig_samples: int = 10
@@ -158,15 +155,15 @@ class Config:
             self.answer_func_mask = AnswerFunc[self.answer_func_mask.upper()]
         elif self.answer_func_mask is None:
             self.answer_func_mask = self.answer_func
-        if self.clean_corrupt is None:
-            self.clean_corrupt = "corrupt" if self.ablation_type == AblationType.RESAMPLE else None
+        # always override clean_corrupt for now
+        self.clean_corrupt = "corrupt" if self.ablation_type == AblationType.RESAMPLE else None
         if isinstance(self.side, str):
             self.side = Side[self.side.upper()]
         if self.side is None:
             self.side = Side.NONE if self.use_abs else Side.LEFT
 
 
-# In[104]:
+# In[14]:
 
 
 # initialize config 
@@ -178,7 +175,7 @@ if not is_notebook():
     conf = Config(**conf_dict)
 
 
-# In[105]:
+# In[15]:
 
 
 # handle directories
@@ -187,13 +184,13 @@ out_dir.mkdir(exist_ok=True)
 score_dir = out_dir / f"{conf.task.replace(' ', '_')}_{conf.ablation_type.name}_{conf.grad_func.name}_{conf.answer_func.name}_{conf.ig_samples}" 
 score_dir.mkdir(exist_ok=True)
 exp_dir = score_dir / f"{conf.use_abs}_{conf.alpha}_{conf.epsilon}_{conf.q_star}"
-if not is_notebook() and exp_dir.exists():
-    print(f"Experiment directory {exp_dir} already exists. Exiting.")
-    exit()
-exp_dir.mkdir(exist_ok=True)
+# if not is_notebook() and exp_dir.exists():
+#     print(f"Experiment directory {exp_dir} already exists. Exiting.")
+#     exit()
+# exp_dir.mkdir(exist_ok=True)
 
 
-# In[106]:
+# In[16]:
 
 
 # initialize task
@@ -201,7 +198,7 @@ task = TASK_DICT[conf.task]
 task.init_task()
 
 
-# In[107]:
+# In[17]:
 
 
 # compute edge scores
@@ -221,7 +218,7 @@ if conf.save_cache:
     save_cache(prune_scores, exp_dir, "prune_scores")
 
 
-# In[108]:
+# In[18]:
 
 
 model_out_train: dict[BatchKey, torch.Tensor] = {
@@ -234,7 +231,7 @@ model_out_test: dict[BatchKey, torch.Tensor] = {
 }
 
 
-# In[109]:
+# In[19]:
 
 
 equiv_results, min_equiv = sweep_search_smallest_equiv(
@@ -253,7 +250,13 @@ equiv_results, min_equiv = sweep_search_smallest_equiv(
 save_json({k: result_to_json(v) for k, v in equiv_results.items()}, exp_dir, "equiv_results")
 
 
-# In[110]:
+# In[20]:
+
+
+equiv_results.keys()
+
+
+# In[21]:
 
 
 equiv_test_result = equiv_test(
@@ -273,7 +276,7 @@ equiv_test_result = equiv_test(
 save_json(result_to_json(equiv_test_result), exp_dir, "equiv_test_result")
 
 
-# In[111]:
+# In[23]:
 
 
 threshold = prune_scores_threshold(prune_scores, min_equiv, use_abs=conf.use_abs)
@@ -282,7 +285,7 @@ edges = edges_from_mask(task.model.srcs, task.model.dests, edge_mask, token=task
 save_json([edge.name for edge in edges], exp_dir, "edges")
 
 
-# In[112]:
+# In[24]:
 
 
 # contruct a graph from the pruned circuit, to further prune
@@ -291,7 +294,7 @@ node_circ_graph.build_graph()
 assert set(node_circ_graph.parents.keys()) == set([k for k in node_circ_graph.children.keys() if k.name != "Resid Start"])
 
 
-# In[134]:
+# In[25]:
 
 
 valid_edges = [
@@ -312,7 +315,7 @@ valid_edge_scores = {k: prune_scores[k] * (1-invalid_edge_score_mask[k]) for k i
 assert sum([torch.sum(((torch.abs(v) if conf.use_abs else v) >= threshold) & (v != 0)) for v in valid_edge_scores.values()]) == len(valid_edges)
 
 
-# In[114]:
+# In[26]:
 
 
 # from elk_experiments.auto_circuit.circuit_hypotests import equiv_test
@@ -332,10 +335,10 @@ valid_edges_equiv_result = equiv_test(
     alpha=conf.alpha,
     epsilon=conf.epsilon,
 )[min_equiv_valid_edges]
-save_json(result_to_json(valid_edges_equiv_result), exp_dir, "valid_edges_equiv_result")
+# save_json(result_to_json(valid_edges_equiv_result), exp_dir, "valid_edges_equiv_result")
 
 
-# In[135]:
+# In[27]:
 
 
 # set cicuit under test
@@ -349,7 +352,7 @@ edges_under_test_scores = {edge: prune_scores[edge.dest.module_name][get_edge_id
 edges_under_test = sorted(edges_under_test_scores.keys(), key=lambda x: abs(edges_under_test_scores[x]), reverse=False)
 
 
-# In[136]:
+# In[28]:
 
 
 fig = draw_seq_graph(
@@ -365,21 +368,21 @@ fig = draw_seq_graph(
 fig.write_image(repo_path_to_abs_path(exp_dir / "valid_edge_graph.png"))
 
 
-# In[19]:
+# In[23]:
 
 
 fig, ax = plot_num_ablated_C_gt_M(equiv_results, epsilon=conf.epsilon, min_equiv=min_equiv, side=conf.side)
 fig.savefig(repo_path_to_abs_path(exp_dir / "num_ablated_C_gt_M.png"))
 
 
-# In[20]:
+# In[24]:
 
 
 fig, ax = plot_circuit_and_model_scores(equiv_results, min_equiv)
 fig.savefig(repo_path_to_abs_path(exp_dir / "circuit_model_scores.png"))
 
 
-# In[26]:
+# In[25]:
 
 
 # plot attribution scores 
@@ -403,9 +406,17 @@ fig.savefig(repo_path_to_abs_path(exp_dir / "edge_scores_knees_linear.png"))
 fig
 
 
+# In[37]:
+
+
+if min_equiv == task.model.n_edges:
+    print("Circuit is entire model, cannot test minimality or independence")
+    exit()
+
+
 # # Minimality Test
 
-# In[137]:
+# In[29]:
 
 
 # build full grap to sample paths
@@ -413,7 +424,7 @@ node_graph = NodeGraph(task.model.edges, token=task.token_circuit, attn_only=tas
 node_graph.build_graph()
 
 
-# In[138]:
+# In[30]:
 
 
 # sample paths to be used for testing
@@ -425,7 +436,7 @@ mean_uniform = np.mean([len(path) for path in filtered_paths_uniform])
 mean_walk, mean_uniform
 
 
-# In[139]:
+# In[31]:
 
 
 # run minimality test
@@ -476,7 +487,6 @@ if not true_edges_tested:
         tokens=task.token_circuit,
         alpha=conf.alpha, 
         q_star=conf.q_star,
-        stop_if_failed=False, 
         max_edges_in_order=conf.max_edges_to_test_in_order,
         max_edges_to_sample=conf.max_edges_to_sample,
     )
