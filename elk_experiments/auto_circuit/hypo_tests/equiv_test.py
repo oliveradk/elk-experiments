@@ -204,7 +204,11 @@ def sweep_search_smallest_equiv(
         new_width = width // 10
         if min_equiv == model.n_edges:
             interval_max = model.n_edges
-            interval_min = model.n_edges - model.n_edges % width - width
+            if len(test_results) == 1:
+                interval_min = model.n_edges
+                new_width = 0 # exit loop
+            else:
+                interval_min = edge_counts[-2] # get last edge count tested before full
         else:
             interval_max = min_equiv
             interval_min = min_equiv - width
