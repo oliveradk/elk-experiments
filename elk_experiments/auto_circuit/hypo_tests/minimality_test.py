@@ -21,7 +21,7 @@ from auto_circuit.utils.custom_tqdm import tqdm
 
 from elk_experiments.auto_circuit.auto_circuit_utils import run_circuits, prune_scores_threshold
 from elk_experiments.auto_circuit.score_funcs import GradFunc, AnswerFunc, get_score_func
-from elk_experiments.auto_circuit.node_graph import NodeGraph, sample_paths, SampleType
+from elk_experiments.auto_circuit.edge_graph import EdgeGraph, sample_paths, SampleType
 from elk_experiments.auto_circuit.hypo_tests.utils import edges_from_mask, get_edge_idx, set_score
 
 
@@ -48,7 +48,7 @@ def minimality_test( #TODO: seperate infalted circuit seperate from dataset, get
     answer_function: AnswerFunc,
     filtered_paths: Optional[list[list[Edge]]] = None,
     sampling_type: Optional[SampleType] = None,
-    node_graph: Optional[NodeGraph] = None,
+    edge_graph: Optional[EdgeGraph] = None,
     n_paths: Optional[int] = None,
     circuit_out: Optional[CircuitOutputs] = None,
     threshold: Optional[float] = None,
@@ -75,14 +75,14 @@ def minimality_test( #TODO: seperate infalted circuit seperate from dataset, get
 
     # sample filtered paths if not provided
     if filtered_paths is None:
-        if node_graph is None:
-            raise ValueError("node_graph must be provided if filtered_paths is not provided")
+        if edge_graph is None:
+            raise ValueError("edge_graph must be provided if filtered_paths is not provided")
         if sampling_type is None:
             raise ValueError("sampling_type must be provided if filtered_paths is not provided")
         if n_paths is None:
             raise ValueError("n_paths must be provided if filtered_paths is not provided")
         filtered_paths = sample_paths(
-            node_graph=node_graph,
+            edge_graph=edge_graph,
             n_paths=n_paths,
             sample_type=sampling_type,
             tested_edges=edges,
@@ -152,7 +152,7 @@ def minimality_test( #TODO: seperate infalted circuit seperate from dataset, get
     # run minimality test until failure and exceeds max_edges_in_order (whichever comes second)
     ordered_test_results = {}
     has_failed = False
-    for i, edge in tqdm(enumerate(edges), total=len(edges)):
+    for i, edge in tqdm(enumerate(edges)):
         result = test_edge(edge)
         has_failed = has_failed or result.not_minimal
         ordered_test_results[edge] = result
