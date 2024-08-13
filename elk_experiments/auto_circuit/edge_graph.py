@@ -1,7 +1,8 @@
 from collections import defaultdict, namedtuple
-from typing import Tuple, Optional 
+from typing import Tuple, Optional, Literal
 import random
 from enum import Enum
+from dataclasses import dataclass
 
 import networkx as nx
 import matplotlib.pyplot as plt
@@ -41,6 +42,41 @@ def filter_edges(
 Graph = dict[Edge, list[Edge]]
 PathCounts = dict[Edge, int]
 
+
+# ok so the idea is have connector objects for each "destination" node, with parent edges and child edges 
+# we can construct this by iterating over and adding one for each destination / seq_idx 
+# then we add children as edges, and parents as edges
+
+
+ConnIdx = Tuple[int, int, int] # layer, head, seq_idx
+@dataclass(frozen=True)
+class Connector():
+    layer_idx: int
+    head_idx: int
+    seq_idx: int
+    type: Literal["q", "k", "v", "mlp", "resid"] = "resid"
+    children: list[Edge]
+    parents: list[Edge]
+    
+# ok I guess the way we want to set this up is children are edge, connnector tuples
+
+def get_conn_idx(conn: Connector) -> ConnIdx:
+    return (conn.layer_idx, conn.head_idx, conn.seq_idx)
+
+def node_name_to_type(node_name: str) -> Literal["q", "k", "v", "mlp", "resid"]:
+    if node_name.endswith("Q"):
+        return "q"
+    if node_name.endswith("K"):
+        return "k"
+    if node_name.endswith("V"):
+        return "v"
+    if node_name.startswith("MLP"):
+        return "mlp"
+    if node_name.startswith("Resid"):
+        return "resid"
+    raise ValueError(f"Invalid node name {node_name}")
+
+
 class EdgeGraph():
     """
     "Edges" from AutoCircuit are "Nodes", connected to parent and child "Edges" 
@@ -48,7 +84,8 @@ class EdgeGraph():
 
     Automatically removed edges which cannot reach output at last_seq_idx
     (TODO: generalize to arbitary output nodes - required for tracr)
-
+    TODO: need to re-refactor, add connectors that edges can link to, but don't need separate 
+    # parents and children for each edge
     """
 
     def __init__(
@@ -68,11 +105,20 @@ class EdgeGraph():
         edges = filter_edges(edges, self.max_layer, self.last_seq_idx, attn_only=attn_only)
         self.edges = sorted(edges, key=lambda edge: (edge.dest.layer, edge.seq_idx))
 
-        # the core data structures are children and parents, which are dictinaries 
-        # from edges to lists of edges 
-        self.children: Graph = {}
-        self.parents: Graph = defaultdict(list[Edge])
-        # we also map nod
+        # the core data structure is now the connnectors
+        self.conns: dict[ConnIdx, Connector] = {}
+        for dest, seq_idx in set([(edge.dest, edge.dest.head_idx, edge.seq_idx) for edge in self.edges]):
+            self.conns[(dest.layer, dest.head_idx, seq_idx)] = Connector(
+                layer=dest.layer, head_idx=dest.head_dim, seq_idx=seq_idx, type=node_name_to_type(dest.name)
+            )
+        # add connector for resid starts 
+        for seq_idx in range(self.last_seq_idx + 1):
+            self.conns[(-1, 0, seq_idx)] = Connector(
+                layer=-1, head_idx=0, seq_idx=seq_idx, type="resid"
+        )
+
+
+        # we also track path counts, and whether a node is reachable
         self.path_counts: PathCounts = defaultdict(int)
         self.reachable: dict[Edge, bool] = {}
 
@@ -87,8 +133,8 @@ class EdgeGraph():
             self.edges_by_dest_idx[get_node_idx(edge.dest)].append(edge) # used for upstream propogation
             self.edges_by_src_idx[get_node_idx(edge.src)].append(edge) # used for downstream propogation
     
-    def get_edges(self, by_src: bool=True) -> list[Edge]:
-        sort_key = lambda edge: (edge.src.layer if by_src else edge.dest.layer, edge.seq_idx)
+    def get_conns(self, by_src: bool=True) -> list[Edge]:
+        sort_key = lambda conn: (conn.src.layer if by_src else edge.dest.layer, edge.seq_idx)
         return sorted(self.edges, key=sort_key)
 
     
@@ -98,7 +144,7 @@ class EdgeGraph():
 
     def build_children(self):
         # construct dest graph from resid end of last token, layer by layer, tracking path counts at each node
-        for edge in tqdm(reversed(self.get_edges(by_src=False))):
+        for edge in tqdm(reversed(self.get_edges(by_src=False)), desc="Building children"):
             # if dest is resid end (leaf) add to graph and set path count to 1, and skip
             if edge.dest.name == "Resid End":
                 self.children[edge] = []
@@ -127,7 +173,7 @@ class EdgeGraph():
 
     def build_parents(self):
         # iterate over sequnce nodes starting from layer 0
-        for edge in tqdm(self.get_edges(by_src=True)):
+        for edge in tqdm(self.get_edges(by_src=True), desc="Building parents"):
             # add parent to each child
             for child in self.children[edge]:
                 self.parents[child].append(edge) # add 
