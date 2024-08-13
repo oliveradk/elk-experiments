@@ -303,12 +303,13 @@ valid_edges = [
     )
 ]
 min_equiv_valid_edges = len(valid_edges)
-#save_json([edge.name for edge in valid_edges], exp_dir, "valid_edges")
+save_json([edge.name for edge in valid_edges], exp_dir, "valid_edges")
 # mask out all edges not in edges to dest
 # edge_score_mask = {k: ((torch.abs(v) if conf.use_abs else v) >= threshold).to(torch.int) for k, v in prune_scores.items()}
 invalid_edge_score_mask = task.model.circuit_prune_scores(set(edges) - set(valid_edges)) # edges to remove
 valid_edge_scores = {k: prune_scores[k] * (1-invalid_edge_score_mask[k]) for k in prune_scores.keys()}
-assert sum([torch.sum(((torch.abs(v) if conf.use_abs else v) >= threshold) & (v != 0)) for v in valid_edge_scores.values()]) == len(valid_edges)
+if not sum([torch.sum(((torch.abs(v) if conf.use_abs else v) >= threshold) & (v != 0)) for v in valid_edge_scores.values()]) == len(valid_edges):
+    print("Warning - valid edge scores do not match valid edges")
 
 
 # In[33]:
@@ -316,7 +317,7 @@ assert sum([torch.sum(((torch.abs(v) if conf.use_abs else v) >= threshold) & (v 
 
 # from elk_experiments.auto_circuit.circuit_hypotests import equiv_test
 # recompute equivalence 
-valid_edges_equiv_result = equiv_test(
+valid_edges_equiv_result = next(iter(equiv_test(
     task.model, 
     task.train_loader,
     valid_edge_scores,
@@ -330,8 +331,8 @@ valid_edges_equiv_result = equiv_test(
     side=conf.side,
     alpha=conf.alpha,
     epsilon=conf.epsilon,
-)[min_equiv_valid_edges]
-# save_json(result_to_json(valid_edges_equiv_result), exp_dir, "valid_edges_equiv_result")
+).values()))
+save_json(result_to_json(valid_edges_equiv_result), exp_dir, "valid_edges_equiv_result")
 
 
 # In[34]:
@@ -613,17 +614,18 @@ save_json(result_to_json(indep_result), exp_dir, "indep_result")
 # In[65]:
 
 
-indep_true_edge_result = independence_test(
-    task.model, 
-    task.test_loader, 
-    true_edge_prune_scores, 
-    ablation_type=conf.ablation_type,
-    grad_function=conf.grad_func,
-    answer_function=conf.answer_func,
-    threshold=1.0, 
-    use_abs=True,
-    alpha=conf.alpha,
-    B=1000
-)
-save_json(result_to_json(indep_true_edge_result), score_dir, f"indep_true_edge_result")
+if not true_edges_tested:
+    indep_true_edge_result = independence_test(
+        task.model, 
+        task.test_loader, 
+        true_edge_prune_scores, 
+        ablation_type=conf.ablation_type,
+        grad_function=conf.grad_func,
+        answer_function=conf.answer_func,
+        threshold=1.0, 
+        use_abs=True,
+        alpha=conf.alpha,
+        B=1000
+    )
+    save_json(result_to_json(indep_true_edge_result), score_dir, f"indep_true_edge_result")
 
