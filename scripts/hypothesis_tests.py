@@ -44,7 +44,7 @@ torch.cuda.is_available()
 
 # #  Minimal Faithful Circuit According to Prune Score Ordering
 
-# In[3]:
+# In[1]:
 
 
 import os
@@ -110,7 +110,7 @@ from elk_experiments.auto_circuit.tasks import TASK_DICT
 from elk_experiments.utils import OUTPUT_DIR, repo_path_to_abs_path, load_cache, save_cache, save_json
 
 
-# In[22]:
+# In[6]:
 
 
 # config class
@@ -127,7 +127,7 @@ class Config:
     q_star: float = 0.9 
     grad_func_mask: Optional[Union[GradFunc, str]] = None
     answer_func_mask: Optional[Union[AnswerFunc, str]] = None
-    clean_corrupt: Optional[str] = None #TODO: make enum
+    # clean_corrupt: Optional[str] = None #TODO: make enum
     side: Optional[Union[Side, str]] = None
     max_edges_to_test_in_order: int = 100 #TODO: change to 125
     max_edges_to_sample: int = 100 # TODO: change to 125
@@ -156,18 +156,20 @@ class Config:
             self.answer_func_mask = self.answer_func
         # always override clean_corrupt for now
         self.clean_corrupt = "corrupt" if self.ablation_type == AblationType.RESAMPLE else None
-        if isinstance(self.side, str):
+        if self.epsilon < 0: 
+            self.side = Side.LEFT
+        elif isinstance(self.side, str):
             self.side = Side[self.side.upper()]
-        if self.side is None:
+        else: 
             self.side = Side.NONE if self.use_abs else Side.LEFT #TODO: fix this? for abs and negative epsilon?
 
 
-# In[23]:
+# In[7]:
 
 
 # initialize config 
 conf = Config()
-# get config overrides if runnign from command line
+#get config overrides if runnign from command line
 if not is_notebook():
     import sys 
     conf_dict = OmegaConf.merge(OmegaConf.structured(conf), OmegaConf.from_cli(sys.argv[1:]))
