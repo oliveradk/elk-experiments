@@ -21,7 +21,7 @@ from auto_circuit.utils.custom_tqdm import tqdm
 
 from elk_experiments.auto_circuit.auto_circuit_utils import run_circuits, prune_scores_threshold
 from elk_experiments.auto_circuit.score_funcs import GradFunc, AnswerFunc, get_score_func
-from elk_experiments.auto_circuit.edge_graph import EdgeGraph, sample_paths, SampleType
+from elk_experiments.auto_circuit.edge_graph import SeqGraph, sample_paths 
 from elk_experiments.auto_circuit.hypo_tests.utils import edges_from_mask, get_edge_idx, set_score
 
 
@@ -47,8 +47,7 @@ def minimality_test( #TODO: seperate infalted circuit seperate from dataset, get
     grad_function: GradFunc,
     answer_function: AnswerFunc,
     filtered_paths: Optional[list[list[Edge]]] = None,
-    sampling_type: Optional[SampleType] = None,
-    edge_graph: Optional[EdgeGraph] = None,
+    seq_graph: Optional[SeqGraph] = None,
     n_paths: Optional[int] = None,
     circuit_out: Optional[CircuitOutputs] = None,
     threshold: Optional[float] = None,
@@ -75,16 +74,13 @@ def minimality_test( #TODO: seperate infalted circuit seperate from dataset, get
 
     # sample filtered paths if not provided
     if filtered_paths is None:
-        if edge_graph is None:
-            raise ValueError("edge_graph must be provided if filtered_paths is not provided")
-        if sampling_type is None:
-            raise ValueError("sampling_type must be provided if filtered_paths is not provided")
+        if seq_graph is None:
+            raise ValueError("seq_graph must be provided if filtered_paths is not provided")
         if n_paths is None:
             raise ValueError("n_paths must be provided if filtered_paths is not provided")
         filtered_paths = sample_paths(
-            edge_graph=edge_graph,
+            seq_graph=seq_graph,
             n_paths=n_paths,
-            sample_type=sampling_type,
             tested_edges=edges,
         )
     

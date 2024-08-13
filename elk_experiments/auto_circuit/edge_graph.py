@@ -1,8 +1,8 @@
-from collections import defaultdict, namedtuple
+from collections import defaultdict, namedtuple, OrderedDict
 from typing import Tuple, Optional, Literal
 import random
 from enum import Enum
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import networkx as nx
 import matplotlib.pyplot as plt
@@ -10,82 +10,110 @@ import matplotlib.pyplot as plt
 from auto_circuit.types import SrcNode, DestNode, Edge, Node
 from auto_circuit.utils.custom_tqdm import tqdm
 
-
+class NodeType(Enum):
+    Q = 0 
+    K = 1 
+    V = 2
+    ATTN = 3
+    MLP = 4
+    RESID_START = 5 
+    RESID_END = 6
 
 NodeIdx = Tuple[int, int] # layer, head
-def get_node_idx(node: DestNode) -> NodeIdx:
-    return (node.layer, node.head_idx)
+SeqNodeKey = Tuple[int, int, int, NodeType] # layer, head_idx, seq_idxs, node_type
 
-def valid_node(node: DestNode, seq_idx: int, max_layer: int, last_seq_idx: int, attn_only: bool=False) -> bool:
-    before_last = ((node.layer < max_layer - 2) or (attn_only and node.layer < max_layer - 1)) 
+
+def node_name_to_type(node_name: str) -> Literal["q", "k", "v", "mlp", "resid"]:
+    if node_name.endswith("Q"):
+        return NodeType.Q
+    if node_name.endswith("K"):
+        return NodeType.K
+    if node_name.endswith("V"):
+        return NodeType.V
+    if node_name.startswith("A"):
+        return NodeType.ATTN
+    if node_name.startswith("MLP"):
+        return NodeType.MLP
+    if node_name.startswith("Resid Start"):
+        return NodeType.RESID_START
+    if node_name.startswith("Resid End"):
+        return NodeType.RESID_END
+    raise ValueError(f"Invalid node name {node_name}")
+
+
+def valid_node(
+    layer: int, 
+    node_type: NodeType, 
+    seq_idx: int, 
+    max_layer: int, 
+    last_seq_idx: int, 
+    attn_only: bool=False
+) -> bool:
+    before_last = ((layer < max_layer - 2) or (attn_only and layer < max_layer - 1)) 
     if before_last: 
         return True  
     if seq_idx == last_seq_idx: # last sequence index
         return True 
-    if node.name.endswith(("K", "V")): # is k or value
+    if node_type in (NodeType.K, NodeType.V): # is k or value
         return True
     return False
 
-def filter_edges(
-    edges: list[Edge], 
-    max_layer: int, 
-    last_seq_idx: int, 
-    attn_only: bool=False
-) -> list[Edge]:
-    return [
-        edge for edge in edges 
-        if valid_node(edge.dest, edge.seq_idx, max_layer, last_seq_idx, attn_only=attn_only)
-    ]
+def dest_to_src_node_type(node_type: NodeType) -> NodeType:
+    if node_type in (NodeType.Q, NodeType.K, NodeType.V):
+        return NodeType.ATTN
+    else: 
+        assert node_type in (NodeType.ATTN, NodeType.MLP)
+        return node_type
 
 
-# EdgeGraph types
-Graph = dict[Edge, list[Edge]]
-PathCounts = dict[Edge, int]
-
-
-# ok so the idea is have connector objects for each "destination" node, with parent edges and child edges 
-# we can construct this by iterating over and adding one for each destination / seq_idx 
-# then we add children as edges, and parents as edges
-
-
-ConnIdx = Tuple[int, int, int] # layer, head, seq_idx
-@dataclass(frozen=True)
-class Connector():
-    layer_idx: int
+@dataclass
+class SeqNode:
+    name: str
+    layer: int 
     head_idx: int
     seq_idx: int
-    type: Literal["q", "k", "v", "mlp", "resid"] = "resid"
-    children: list[Edge]
-    parents: list[Edge]
-    
-# ok I guess the way we want to set this up is children are edge, connnector tuples
+    node_type: NodeType
+    is_src: bool 
+    path_count: int 
+    reachable: bool
+    in_edges: list["SeqEdge"] = field(default_factory=list)
+    out_edges: list["SeqEdge"] = field(default_factory=list)
 
-def get_conn_idx(conn: Connector) -> ConnIdx:
-    return (conn.layer_idx, conn.head_idx, conn.seq_idx)
+    @classmethod
+    def from_node(cls, node: Node, seq_idx: int, path_count: int=0, reachable: bool=False) -> "SeqNode":
+        return cls(
+            name=node.name,
+            layer=node.layer,
+            head_idx=node.head_idx,
+            seq_idx=seq_idx,
+            is_src=isinstance(node, SrcNode),
+            node_type=node_name_to_type(node.name),
+            path_count=path_count,
+            reachable=reachable,
+        )
 
-def node_name_to_type(node_name: str) -> Literal["q", "k", "v", "mlp", "resid"]:
-    if node_name.endswith("Q"):
-        return "q"
-    if node_name.endswith("K"):
-        return "k"
-    if node_name.endswith("V"):
-        return "v"
-    if node_name.startswith("MLP"):
-        return "mlp"
-    if node_name.startswith("Resid"):
-        return "resid"
-    raise ValueError(f"Invalid node name {node_name}")
+def get_seq_node_key(node: SeqNode) -> SeqNodeKey:
+    return (node.layer, node.head_idx, node.seq_idx, node_name_to_type(node.name))
+
+def node_to_seq_node_key(node: Node, seq_idx: int) -> SeqNodeKey:
+    return (node.layer, node.head_idx, seq_idx, node_name_to_type(node.name))
+
+def dest_node_to_src_node_key(node: SeqNode):
+    return (node.layer, node.head_idx, node.seq_idx, dest_to_src_node_type(node.node_type))
+
+@dataclass 
+class SeqEdge:
+    head: SeqNode
+    tail: SeqNode
+    edge: Optional[Edge] = None
 
 
-class EdgeGraph():
+class SeqGraph():
     """
-    "Edges" from AutoCircuit are "Nodes", connected to parent and child "Edges" 
-    with children (dict[Edge, list[Edge]]) and parents (dict[Edge, list[Edge])
+    Same as graph created from patchable model, but with 
+    edge from dest nodes to src nodes (including cross-seq attention edges)
 
     Automatically removed edges which cannot reach output at last_seq_idx
-    (TODO: generalize to arbitary output nodes - required for tracr)
-    TODO: need to re-refactor, add connectors that edges can link to, but don't need separate 
-    # parents and children for each edge
     """
 
     def __init__(
@@ -94,201 +122,209 @@ class EdgeGraph():
         token: bool = True,
         attn_only: bool = False
     ):  
-        
         # used for filtering edges
         self.last_seq_idx = max([edge.seq_idx for edge in edges]) if token else None
         self.max_layer = max([edge.dest.layer for edge in edges])
         self.token = token
         self.attn_only = attn_only
+
+        # create srcs and dests, and edges between them
+        self.seq_srcs: dict[SeqNodeKey, SeqNode] = dict()
+        self.seq_dests: dict[SeqNodeKey, SeqNode] = dict()
+        self.seq_nodes: list[SeqNode] = []
+        self._build_graph(edges) #inits seq_srcs, seq_dests
+        self._sort_nodes() # inits seq_nodes
+        self._compute_path_counts()
+        self._compute_reachable()
+
         
-        # filter and sort edges
-        edges = filter_edges(edges, self.max_layer, self.last_seq_idx, attn_only=attn_only)
-        self.edges = sorted(edges, key=lambda edge: (edge.dest.layer, edge.seq_idx))
-
-        # the core data structure is now the connnectors
-        self.conns: dict[ConnIdx, Connector] = {}
-        for dest, seq_idx in set([(edge.dest, edge.dest.head_idx, edge.seq_idx) for edge in self.edges]):
-            self.conns[(dest.layer, dest.head_idx, seq_idx)] = Connector(
-                layer=dest.layer, head_idx=dest.head_dim, seq_idx=seq_idx, type=node_name_to_type(dest.name)
-            )
-        # add connector for resid starts 
-        for seq_idx in range(self.last_seq_idx + 1):
-            self.conns[(-1, 0, seq_idx)] = Connector(
-                layer=-1, head_idx=0, seq_idx=seq_idx, type="resid"
-        )
-
-
-        # we also track path counts, and whether a node is reachable
-        self.path_counts: PathCounts = defaultdict(int)
-        self.reachable: dict[Edge, bool] = {}
-
-        # to construt this, we'll need 
-        # a "forward" map, which connects destination nodes to source nodes - edges_by_src_idx 
-        # a "backward" map, which connects source nodes to destination nodes - edges_by_dest_idx
-        # we use these to get candidate children and parents for each edge, and then filter 
-        # for valid edges based seq_idx, layer, and cross sequence connections (K, V)
-        self.edges_by_dest_idx: dict[NodeIdx, list[Edge]] = defaultdict(list)
-        self.edges_by_src_idx: dict[NodeIdx, list[Edge]] = defaultdict(list)
-        for edge in self.edges:
-            self.edges_by_dest_idx[get_node_idx(edge.dest)].append(edge) # used for upstream propogation
-            self.edges_by_src_idx[get_node_idx(edge.src)].append(edge) # used for downstream propogation
-    
-    def get_conns(self, by_src: bool=True) -> list[Edge]:
-        sort_key = lambda conn: (conn.src.layer if by_src else edge.dest.layer, edge.seq_idx)
-        return sorted(self.edges, key=sort_key)
-
-    
-    def build_graph(self):
-        self.build_children()
-        self.build_parents()
-
-    def build_children(self):
-        # construct dest graph from resid end of last token, layer by layer, tracking path counts at each node
-        for edge in tqdm(reversed(self.get_edges(by_src=False)), desc="Building children"):
-            # if dest is resid end (leaf) add to graph and set path count to 1, and skip
-            if edge.dest.name == "Resid End":
-                self.children[edge] = []
-                self.path_counts[edge] = 1
-                continue 
-            # get downstream edges from edge
-            child_edges = self.edges_by_src_idx[get_node_idx(edge.dest)]
-            if edge.dest.name.endswith(("K", "V")) or not self.token:
-                # if dest.layer >= max_layer - 2 (last layer or two layers depending on whether attention and mlp are counted together)
-                if edge.dest.layer >= self.max_layer - 2 and self.token:
-                    # convert edge dests to seq nodes with seq_idx = last_seq_idx
-                    child_edges = [
-                        c_edge for c_edge in child_edges 
-                        if c_edge.seq_idx == self.last_seq_idx
-                    ]
-                # else don't filter edges
-            else: # (q or mlp)
-                # filter for edges in the same sequence position
-                child_edges = [
-                    c_edge for c_edge in child_edges 
-                    if c_edge.seq_idx == edge.seq_idx # must be aligned b/c not k or v
-                ]
-            self.children[edge] = child_edges
-            self.path_counts[edge] = sum([self.path_counts[c_edge] for c_edge in child_edges])
-        self.path_counts = dict(self.path_counts) # convert to dict
-
-    def build_parents(self):
-        # iterate over sequnce nodes starting from layer 0
-        for edge in tqdm(self.get_edges(by_src=True), desc="Building parents"):
-            # add parent to each child
-            for child in self.children[edge]:
-                self.parents[child].append(edge) # add 
-            # set reachable
-            if edge.src.name == "Resid Start":
-                self.reachable[edge] = True
-                self.parents[edge] = [] # no parents for start
+    def _build_graph(self, edges: list[Edge]):
+        # initialize seq srcs and dests, adding (standard) edges between src and dest
+        for edge in edges:
+            src_node_key = node_to_seq_node_key(edge.src, edge.seq_idx)
+            dest_node_key = node_to_seq_node_key(edge.dest, edge.seq_idx)
+            # if dest is not valid (can't reach output)
+            if not self.valid_node(edge.dest.layer, dest_node_key[-1], edge.seq_idx):
                 continue
-            # for queries, want to check if k or v is reachable in a different sequence positin
-            self.reachable[edge] = any([self.reachable[parent] for parent in self.parents[edge]])
-        self.reachable = dict(self.reachable) # convert to dict
+            if src_node_key not in self.seq_srcs:
+                self.seq_srcs[src_node_key] = SeqNode.from_node(edge.src, edge.seq_idx)
+            if dest_node_key not in self.seq_dests:
+                self.seq_dests[dest_node_key] = SeqNode.from_node(edge.dest, edge.seq_idx)
+            seq_src = self.seq_srcs[src_node_key]
+            seq_dest = self.seq_dests[dest_node_key]
+            seq_edge = SeqEdge(head=seq_src, tail=seq_dest, edge=edge)
+            seq_src.out_edges.append(seq_edge)
+            seq_dest.in_edges.append(edge)
+        
+        # add edges between dests and srcs 
+        # required for attention edges from k,v to attention head in all subsequent seq_idxs
+        attn_srcs: dict[NodeIdx, list[SeqNode]] = defaultdict(list)
+        for seq_src in self.seq_srcs.values():
+            if seq_src.node_type == NodeType.ATTN:
+                attn_srcs[(seq_src.layer, seq_src.head_idx)].append(seq_src)
+        for dest in self.seq_dests.values():
+            if dest.node_type == NodeType.RESID_END:
+                pass
+            elif dest.node_type in (NodeType.K, NodeType.V):
+                # add attention head at all subsequent seq_idxs
+                seq_srcs_to_add = [src for src in attn_srcs[(dest.layer + 1, dest.head_idx)] 
+                                   if src.seq_idx >= dest.seq_idx] # causal attention
+                for seq_src in seq_srcs_to_add:
+                    out_edge = SeqEdge(head=dest, tail=seq_src)
+                    dest.out_edges.append(out_edge)
+                    seq_src.in_edges.append(out_edge)
+            else:
+                # add src with same layer and head_idx
+                src_idx = dest_node_to_src_node_key(dest)
+                if src_idx in self.seq_srcs:
+                    seq_src = self.seq_srcs[dest_node_to_src_node_key(dest)]
+                    out_edge = SeqEdge(head=dest, tail=seq_src)
+                    dest.out_edges.append(out_edge)
+                    seq_src.in_edges.append(out_edge)
+    
+    def valid_node(self, layer: int, node_type: NodeType, seq_idx: int) -> bool:
+        return valid_node(layer, node_type, seq_idx, self.max_layer, self.last_seq_idx, attn_only=self.attn_only)
+    
+    def _sort_nodes(self):
+        combined_nodes: list[SeqNode] = [*self.seq_srcs.values(), *self.seq_dests.values()]
+        self.nodes = sorted(combined_nodes, key=lambda node: (
+            node.layer, node.is_src, node.seq_idx, node.head_idx
+        ))
+
+    def _compute_path_counts(self): 
+        for seq_node in reversed(self.seq_nodes):
+            if seq_node.node_type == NodeType.RESID_END:
+                seq_node.path_count = 1
+                continue
+            if len(seq_node.out_edges) == 0:
+                seq_node.path_count = 0
+                continue
+            seq_node.path_count = sum([edge.tail.path_count for edge in seq_node.out_edges]) # sum of children path counts
+
+    def _compute_reachable(self):
+        for seq_node in self.seq_nodes:
+            if seq_node.node_type == NodeType.RESID_START:
+                seq_node.reachable = True
+                continue
+            seq_node.reachable = any([in_edge.tail.reachable for in_edge in seq_node.in_edges])
 
 
-def edge_in_path(edge: Edge, edge_graph: EdgeGraph, in_path_req=True, reach_req=True) -> bool:
-    assert (in_path_req or reach_req)
-    if in_path_req:
-        if edge not in edge_graph.path_counts or edge_graph.path_counts[edge] == 0:
-            return False
-    if not reach_req:
-        return True
-    return edge_graph.reachable[edge]
+def edge_in_path(edge: Edge, seq_graph: SeqGraph, in_path_req=True, reach_req=True) -> bool:
+    # look up edge src, see if reachable 
+    edge_src = seq_graph.seq_srcs[node_to_seq_node_key(edge.src, edge.seq_idx)]
+    if reach_req and not edge_src.reachable:
+        return False
+    # look up edge dest, see if path_counts > 0s
+    edge_dest = seq_graph.seq_dests[node_to_seq_node_key(edge.dest, edge.seq_idx)]
+    if in_path_req and edge_dest.path_count == 0:
+        return False
+    return True
 
-class SampleType(Enum):
-    WALK = 0
-    UNIFORM = 1
 
 # goal is to return equivalent of path counts, but only count paths that have at least one edge in provided edges 
+PathCounts = dict[Tuple[SeqNodeKey, bool], int]
 def get_edge_path_counts(
     edges: list[Edge],
-    edge_graph: EdgeGraph,
-) -> PathCounts:
-    max_layer = max([edge.src.layer for edge in edges])
-    
-    # initialize with edges to 1 
+    seq_graph: SeqGraph,
+) -> Tuple[PathCounts, set[Tuple[SeqNodeKey, bool]]]:
+    # create path counts default dict (key is SeqNodeKey and is_src)
     edge_path_counts: PathCounts = defaultdict(int)
+    has_edge: set[Tuple[SeqNodeKey, bool]] = set()
+    
+    # initialize path counts and has edge for edges dests
     for edge in edges: 
-        edge_path_counts[edge] = 1
+        edge_path_counts[(node_to_seq_node_key(edge.src, edge.seq_idx), True)] = 1
+        has_edge.add((node_to_seq_node_key(edge.dest, edge.seq_idx), True))
+    
     # in revesred order from max layer 
     # set to max of edge_path_counts of children or edge_path counts of self
-    edges_to_process = [edge for edge in edge_graph.get_edges(by_src=False) if edge.dest.layer <= max_layer]
-    for edge in tqdm(reversed(edges_to_process)):
-        child_path_counts = sum([edge_path_counts[child] for child in edge_graph.children[edge]])
-        edge_path_counts[edge] = max(child_path_counts, edge_path_counts[edge])
+    max_layer = max([edge.src.layer for edge in edges])
+
+    # get seq_nodes to process
+    seq_nodes_to_process: list[SeqNode] = []
+    for node in seq_graph.seq_nodes: # sorted in order of layer
+        if node.layer > max_layer:
+            break
+        seq_nodes_to_process.append(node)
+
+    # get path counts from child path counts
+    for seq_node in tqdm(reversed(seq_nodes_to_process)):
+        edge_path_counts[(get_seq_node_key(seq_node), seq_node.is_src)] = sum([
+            edge_path_counts[(get_seq_node_key(edge.tail), edge.tail.is_src)] 
+            for edge in seq_node.out_edges
+        ])
     return edge_path_counts
+
+
+def _sample_edge_idx(
+    seq_nodes: list[SeqNode], 
+    edge_path_counts: Optional[PathCounts]=None,
+    is_src: Optional[bool]=None
+) -> Tuple[int, int]:
+    if edge_path_counts: 
+        path_counts = [edge_path_counts[(get_seq_node_key(node), is_src)] for node in seq_nodes]
+    else: 
+        path_counts = [node.path_count for node in seq_nodes]
+    path_count_sum = sum(path_counts)
+    probs = [path_count / path_count_sum for path_count in path_counts]
+    idx = random.choices(range(len(seq_nodes)), weights=probs)[0] 
+    return idx, path_counts[idx]
 
 
 # sample path
 def sample_path_uniform(
-    edge_graph: EdgeGraph, 
+    seq_graph: SeqGraph, 
     edge_path_counts: Optional[PathCounts]=None, 
+    has_edge: Optional[set[Tuple[SeqNodeKey, bool]]]=None,
     edges: Optional[set[Edge]]=None
 ) -> list[Edge]:
     assert (edge_path_counts is None) == (edges is None)
-    # sample first node in path
-    path = []
-    start_edges = [edge for edge in edge_graph.get_edges(by_src=True) if edge.src.name == "Resid Start"]
-    if edge_path_counts is not None:
-        total_edge_paths = sum([edge_path_counts[node] for node in start_edges])
-        start_probs = [edge_path_counts[node] / total_edge_paths for node in start_edges]
-    else: 
-        start_probs = None
-    current = random.choices(start_edges, weights=start_probs)[0]
-    edge_added = current in edges
-    path.append(current)
 
+    # get start nodes
+    start_nodes = [seq_graph.seq_nodes[i] for i in range(seq_graph.last_seq_idx)]
+    assert all([node.node_type == NodeType.RESID_START for node in start_nodes])
+
+    # sample start node
+    path = []
+    curr_idx, path_count = _sample_edge_idx(start_nodes, edge_path_counts, True)
+    curr = start_nodes[curr_idx]
     # sample path to include edge (if edge with path)
     if edge_path_counts is not None: 
-        while not edge_added:
-            neighbors = edge_graph.children[current]
-            probs = [edge_path_counts[neighbor] / edge_path_counts[current] for neighbor in neighbors]
-            current = random.choices(neighbors, weights=probs)[0]
-            path.append(current)
-            edge_added = current in edges
+        while not (path_count == 1 and curr.is_src and get_seq_node_key(curr) in has_edge):
+            curr_idx, path_count = _sample_edge_idx(
+                [edge.tail for edge in curr.out_edges], 
+                edge_path_counts, 
+                not curr.is_src
+            )
+            curr_edge = curr.out_edges[curr_idx]
+            if curr_edge.edge != None:
+                path.append(curr_edge.edge)
+            curr = curr_edge.tail
+        # get edge that is in edges and update cur and path
+        curr_edge = next(edge for edge in curr.out_edges if edge.edge in edges)
+        curr = curr_edge.tail
+        path.append(curr_edge.edge)
     
     # sample rest of path
-    while current.dest.name != "Resid End":
-        neighbors = edge_graph.children[current]
-        probs = [edge_graph.path_counts[neighbor] / edge_graph.path_counts[current] for neighbor in neighbors]
-        current = random.choices(edge_graph.children[current], weights=probs)[0] 
-        path.append(current)
+    while curr.layer != seq_graph.max_layer:
+        curr_idx, path_count = _sample_edge_idx([edge.tail for edge in curr.out_edges])
+        cur_edge = curr.out_edges[curr_idx]
+        if cur_edge.edge != None:
+            path.append(cur_edge.edge)
+        curr = cur_edge.tail
     return path
-
-
-def sample_path_random_walk(
-    edge_graph: EdgeGraph,
-    tested_edges: Optional[list[Edge]],
-) -> list[Edge]:
-    while True:
-        path = []
-        start_slice = slice(None, edge_graph.last_seq_idx if edge_graph.token else 1)
-        current = random.choice(edge_graph.edges[start_slice])
-        while current.dest.name != "Resid End":
-            neighbors = edge_graph.children[current]
-            current = random.choice(neighbors)
-            path.append(current)
-        if tested_edges == None:
-            return path
-        if any((edge not in tested_edges for edge in path)): # must be an edge not in tested edges 
-            return path
     
 
 def sample_paths(
-    edge_graph: EdgeGraph, 
+    seq_graph: SeqGraph, 
     n_paths: int, 
-    sample_type: SampleType, 
-    tested_edges: list[Edge], 
+    complement_edges: set[Edge],
 ) -> list[list[Edge]]:
-    if sample_type == SampleType.UNIFORM:
-        compelement_edges = set(edge_graph.edges) - set(tested_edges)
-        edge_path_counts = get_edge_path_counts(compelement_edges, edge_graph)
-        return [sample_path_uniform(edge_graph, edge_path_counts, compelement_edges) for _ in tqdm(range(n_paths))]
-    elif sample_type == SampleType.WALK:
-        return [sample_path_random_walk(edge_graph, tested_edges) for _ in tqdm(range((n_paths)))]
-    else:
-        raise ValueError(f"Invalid sample type {sample_type}")
+    edge_path_counts, has_edge = get_edge_path_counts(complement_edges, seq_graph)
+    return [
+        sample_path_uniform(seq_graph, edge_path_counts, has_edge, complement_edges) 
+        for _ in tqdm(range(n_paths))
+    ]
 
 
 # def visualize_graph(graph:Graph, sort_by_head: bool=True):
