@@ -166,7 +166,7 @@ class SeqGraph():
         for dest in self.seq_dests.values():
             if dest.node_type == NodeType.RESID_END:
                 pass
-            elif dest.node_type in (NodeType.K, NodeType.V):
+            elif dest.node_type in (NodeType.K, NodeType.V) and self.token:
                 # add attention head at all subsequent seq_idxs
                 seq_srcs_to_add = [src for src in attn_srcs[(dest.layer, dest.head_idx)] 
                                    if src.seq_idx >= dest.seq_idx] # causal attention
@@ -293,7 +293,7 @@ def sample_path_uniform(
     assert (edge_path_counts is None) == (edges is None)
 
     # get start nodes
-    start_nodes = [seq_graph.seq_nodes[i] for i in range(seq_graph.last_seq_idx)]
+    start_nodes = [seq_graph.seq_nodes[i] for i in range(seq_graph.last_seq_idx if seq_graph.token else 1)]
     assert all([node.node_type == NodeType.RESID_START for node in start_nodes])
 
     # sample start node
