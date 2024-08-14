@@ -265,18 +265,27 @@ def get_edge_path_counts(
         )
     return dict(edge_path_counts)
 
+class SampleType(Enum):
+    UNIFORM = 0
+    RANDOM_WALK = 1
 
 def _sample_edge_idx(
     seq_nodes: list[SeqNode], 
     edge_path_counts: Optional[PathCounts]=None,
-    is_src: Optional[bool]=None
+    is_src: Optional[bool]=None,
+    sample_type: SampleType=SampleType.UNIFORM
 ) -> Tuple[int, int]:
     if edge_path_counts: 
         path_counts = [edge_path_counts[(get_seq_node_key(node), is_src)] for node in seq_nodes]
     else: 
         path_counts = [node.path_count for node in seq_nodes]
+    
+    if sample_type == SampleType.RANDOM_WALK: # not proportional to path counts)
+        path_counts = [int(path_count > 0) for path_count in path_counts]
+    
     path_count_sum = sum(path_counts)
     probs = [path_count / path_count_sum for path_count in path_counts]
+
     idx = random.choices(range(len(seq_nodes)), weights=probs)[0] 
     return idx, path_counts[idx]
 
@@ -285,10 +294,11 @@ def _node_edge_in_edges(node: SeqNode, edges: set[Edge]) -> bool:
 
 
 # sample path
-def sample_path_uniform(
+def sample_path(
     seq_graph: SeqGraph, 
     edge_path_counts: Optional[PathCounts]=None, 
-    edges: Optional[set[Edge]]=None
+    edges: Optional[set[Edge]]=None, 
+    sample_type: SampleType=SampleType.UNIFORM
 ) -> list[Edge]:
     assert (edge_path_counts is None) == (edges is None)
 
@@ -298,32 +308,65 @@ def sample_path_uniform(
 
     # sample start node
     path = []
-    curr_idx, path_count = _sample_edge_idx(start_nodes, edge_path_counts, True)
+    curr_idx, path_count = _sample_edge_idx(start_nodes, edge_path_counts, True, sample_type)
     curr = start_nodes[curr_idx]
     # sample path to include edge (if edge with path)
     if edge_path_counts is not None: 
-        while not (path_count == 1 and curr.is_src and _node_edge_in_edges(curr, edges)):
+        edge_found = False 
+        last_edge_in_next = False
+        while not (edge_found) and (not last_edge_in_next):
+            # sample next edge based on edge path counts
             curr_idx, path_count = _sample_edge_idx(
                 [edge.tail for edge in curr.out_edges], 
                 edge_path_counts, 
-                not curr.is_src
+                not curr.is_src,
+                sample_type
             )
             curr_edge = curr.out_edges[curr_idx]
+            # add to path if src to dest edge
             if curr_edge.edge != None:
                 path.append(curr_edge.edge)
+                # check if edge in edges
+                edge_found = curr_edge.edge in edges # sample incedentlly
+            # update current node
             curr = curr_edge.tail
-        # get edge that is in edges and update cur and path
-        curr_edge = next(edge for edge in curr.out_edges if edge.edge in edges)
-        curr = curr_edge.tail
-        path.append(curr_edge.edge)
+            # check if last edge in next node
+            if curr.is_src:
+                last_edge_in_next = path_count == 1 and _node_edge_in_edges(curr, edges) # must sample last edge
+        if last_edge_in_next: # must sample last edge
+            curr_edge = next(edge for edge in curr.out_edges if edge.edge in edges)
+            curr = curr_edge.tail
+            path.append(curr_edge.edge)
     
     # sample rest of path
     while curr.layer != seq_graph.max_layer:
-        curr_idx, path_count = _sample_edge_idx([edge.tail for edge in curr.out_edges])
+        curr_idx, path_count = _sample_edge_idx([edge.tail for edge in curr.out_edges], sample_type=sample_type)
         cur_edge = curr.out_edges[curr_idx]
         if cur_edge.edge != None:
             path.append(cur_edge.edge)
         curr = cur_edge.tail
+    return path
+
+def sample_path_random_walk_rejection( # only used for comparision, should be the same as sample_paths
+    seq_graph: SeqGraph,
+    complement_edges: set[Edge],
+) -> list[Edge]:
+    # get start nodes 
+    start_nodes = [seq_graph.seq_nodes[i] for i in range(seq_graph.last_seq_idx if seq_graph.token else 1)]
+    assert all([node.node_type == NodeType.RESID_START for node in start_nodes])
+    start_nodes = [node for node in start_nodes if node.path_count > 0]
+    
+    # wait until path includes edge in complement_edges
+    path = []
+    while len(path) == 0 or not any(edge in complement_edges for edge in path):
+        path = []
+        curr = random.choice(start_nodes) # could be difference here?
+        while curr.layer != seq_graph.max_layer:
+            valid_edges = [edge for edge in curr.out_edges if edge.tail.path_count > 0]
+            curr_edge = random.choice(valid_edges)
+            if curr_edge.edge != None:
+                path.append(curr_edge.edge)
+            curr = curr_edge.tail
     return path
     
 
@@ -331,10 +374,11 @@ def sample_paths(
     seq_graph: SeqGraph, 
     n_paths: int, 
     complement_edges: set[Edge],
+    sample_type: SampleType=SampleType.RANDOM_WALK
 ) -> list[list[Edge]]:
     edge_path_counts = get_edge_path_counts(complement_edges, seq_graph)
     return [
-        sample_path_uniform(seq_graph, edge_path_counts, complement_edges) 
+        sample_path(seq_graph, edge_path_counts, complement_edges, sample_type) 
         for _ in tqdm(range(n_paths))
     ]
 

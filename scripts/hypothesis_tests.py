@@ -100,6 +100,8 @@ from elk_experiments.auto_circuit.hypo_tests.utils import (
 from elk_experiments.auto_circuit.edge_graph import (
     SeqGraph,  
     sample_paths, 
+    sample_path_random_walk_rejection, 
+    SampleType,
     edge_in_path
 )
 from elk_experiments.auto_circuit.tasks import TASK_DICT
@@ -112,18 +114,19 @@ from elk_experiments.utils import OUTPUT_DIR, repo_path_to_abs_path, load_cache,
 # config class
 @dataclass 
 class Config: 
-    task: str = "Indirect Object Identification Token Circuit"
-    use_abs: bool = False
+    task: str = "Indirect Object Identification Component Circuit"
+    use_abs: bool = True
     ablation_type: Union[AblationType, str] = AblationType.TOKENWISE_MEAN_CORRUPT
-    grad_func: Optional[Union[GradFunc, str]] = GradFunc.LOGPROB
+    grad_func: Optional[Union[GradFunc, str]] = GradFunc.LOGIT
     answer_func: Optional[Union[AnswerFunc, str]] = AnswerFunc.MAX_DIFF
     ig_samples: int = 10
     alpha: float = 0.05
-    epsilon: Optional[float] = None
+    epsilon: Optional[float] = 0.0
     q_star: float = 0.9 
     grad_func_mask: Optional[Union[GradFunc, str]] = None
     answer_func_mask: Optional[Union[AnswerFunc, str]] = None
     # clean_corrupt: Optional[str] = None #TODO: make enum
+    sample_type: Union[SampleType, str] = SampleType.RANDOM_WALK
     side: Optional[Union[Side, str]] = None
     max_edges_to_test_in_order: int = 100 #TODO: change to 125
     max_edges_to_sample: int = 100 # TODO: change to 125
@@ -148,6 +151,8 @@ class Config:
             self.grad_func_mask = self.grad_func
         if isinstance(self.answer_func_mask, str):
             self.answer_func_mask = AnswerFunc[self.answer_func_mask.upper()]
+        if isinstance(self.sample_type, str):
+            self.sample_type = SampleType[self.sample_type.upper()]
         elif self.answer_func_mask is None:
             self.answer_func_mask = self.answer_func
         # always override clean_corrupt for now
@@ -172,7 +177,7 @@ if not is_notebook():
     conf = Config(**conf_dict)
 
 
-# In[10]:
+# In[6]:
 
 
 # handle directories
@@ -187,7 +192,7 @@ exp_dir = score_dir / f"{conf.use_abs}_{conf.alpha}_{conf.epsilon}_{conf.q_star}
 exp_dir.mkdir(exist_ok=True)
 
 
-# In[11]:
+# In[7]:
 
 
 # initialize task
@@ -195,7 +200,7 @@ task = TASK_DICT[conf.task]
 task.init_task()
 
 
-# In[12]:
+# In[8]:
 
 
 # compute edge scores
@@ -215,7 +220,7 @@ if conf.save_cache:
     save_cache(prune_scores, exp_dir, "prune_scores")
 
 
-# In[13]:
+# In[9]:
 
 
 model_out_train: dict[BatchKey, torch.Tensor] = {
@@ -228,7 +233,7 @@ model_out_test: dict[BatchKey, torch.Tensor] = {
 }
 
 
-# In[14]:
+# In[10]:
 
 
 equiv_results, min_equiv = sweep_search_smallest_equiv(
@@ -247,7 +252,7 @@ equiv_results, min_equiv = sweep_search_smallest_equiv(
 save_json({k: result_to_json(v) for k, v in equiv_results.items()}, exp_dir, "equiv_results")
 
 
-# In[15]:
+# In[11]:
 
 
 equiv_test_result = equiv_test(
@@ -267,7 +272,7 @@ equiv_test_result = equiv_test(
 save_json(result_to_json(equiv_test_result), exp_dir, "equiv_test_result")
 
 
-# In[16]:
+# In[12]:
 
 
 threshold = prune_scores_threshold(prune_scores, min_equiv, use_abs=conf.use_abs)
@@ -276,14 +281,14 @@ edges = edges_from_mask(task.model.srcs, task.model.dests, edge_mask, token=task
 save_json([edge.name for edge in edges], exp_dir, "edges")
 
 
-# In[17]:
+# In[13]:
 
 
 # contruct a graph from the pruned circuit, to further prune
 circ_graph = SeqGraph(edges, token=task.token_circuit, attn_only=task.model.cfg.attn_only)
 
 
-# In[18]:
+# In[14]:
 
 
 valid_edges = [
@@ -305,7 +310,7 @@ if not sum([torch.sum(((torch.abs(v) if conf.use_abs else v) >= threshold) & (v 
     print("Warning - valid edge scores do not match valid edges")
 
 
-# In[19]:
+# In[15]:
 
 
 # from elk_experiments.auto_circuit.circuit_hypotests import equiv_test
@@ -328,7 +333,7 @@ valid_edges_equiv_result = next(iter(equiv_test(
 save_json(result_to_json(valid_edges_equiv_result), exp_dir, "valid_edges_equiv_result")
 
 
-# In[20]:
+# In[16]:
 
 
 # set cicuit under test
@@ -342,7 +347,7 @@ edges_under_test_scores = {edge: prune_scores[edge.dest.module_name][get_edge_id
 edges_under_test = sorted(edges_under_test_scores.keys(), key=lambda x: abs(edges_under_test_scores[x]), reverse=False)
 
 
-# In[21]:
+# In[17]:
 
 
 fig = draw_seq_graph(
@@ -358,27 +363,21 @@ fig = draw_seq_graph(
 fig.write_image(repo_path_to_abs_path(exp_dir / "valid_edge_graph.png"))
 
 
-# In[23]:
-
-
-conf.side
-
-
-# In[25]:
+# In[18]:
 
 
 fig, ax = plot_num_ablated_C_gt_M(equiv_results, epsilon=conf.epsilon, min_equiv=min_equiv, side=conf.side)
 fig.savefig(repo_path_to_abs_path(exp_dir / "num_ablated_C_gt_M.png"))
 
 
-# In[26]:
+# In[19]:
 
 
 fig, ax = plot_circuit_and_model_scores(equiv_results, min_equiv)
 fig.savefig(repo_path_to_abs_path(exp_dir / "circuit_model_scores.png"))
 
 
-# In[27]:
+# In[20]:
 
 
 # plot attribution scores 
@@ -391,7 +390,7 @@ fig, ax = plot_edge_scores_and_knees(edge_scores, kneedle_poly, kneedle_1d, min_
 fig.savefig(repo_path_to_abs_path(exp_dir / "edge_scores_knees.png"))
 
 
-# In[28]:
+# In[21]:
 
 
 # zoom in to attribution scores
@@ -402,7 +401,7 @@ fig.savefig(repo_path_to_abs_path(exp_dir / "edge_scores_knees_linear.png"))
 fig
 
 
-# In[29]:
+# In[22]:
 
 
 if min_equiv == task.model.n_edges:
@@ -412,25 +411,25 @@ if min_equiv == task.model.n_edges:
 
 # # Minimality Test
 
-# In[30]:
+# In[23]:
 
 
 # build full grap to sample paths
 graph = SeqGraph(task.model.edges, token=task.token_circuit, attn_only=task.model.cfg.attn_only)
 
 
-# In[31]:
+# In[24]:
 
 
 # sample paths to be used for testinga
 #TODO: change to uniform sampling, but compute path counts in..hmm can i do some kind of forward propogation?
 n_paths = 256
 complement_edges = set(task.model.edges) - set(edges_under_test)
-filtered_paths_uniform = sample_paths(graph, n_paths, complement_edges)
+filtered_paths_uniform = sample_paths(graph, n_paths, complement_edges, sample_type=conf.sample_type)
 assert all([any([edge in complement_edges for edge in path]) for path in filtered_paths_uniform])
 
 
-# In[32]:
+# In[25]:
 
 
 # run minimality test
@@ -455,7 +454,7 @@ save_json({e.name: result_to_json(r) for e, r in min_test_results.items()}, exp_
 save_json({e.name: result_to_json(r) for e, r in min_test_sampled_results.items()}, exp_dir, "min_test_sampled_results")
 
 
-# In[33]:
+# In[26]:
 
 
 # minimality test on true edges
@@ -463,10 +462,9 @@ min_postfix = f"{conf.q_star}_{conf.alpha}"
 min_postfix_full = f"{conf.max_edges_to_test_in_order}_{min_postfix}"
 # check if already tested 
 true_edges_tested = (score_dir / f"min_test_true_edge_results_{min_postfix_full}.json").exists() and not is_notebook()
-
 if not true_edges_tested:
     true_edge_prune_scores = task.model.circuit_prune_scores(task.true_edges)
-    filtered_paths_true_edge = sample_paths(graph, n_paths, set(task.model.edges) - task.true_edges)
+    filtered_paths_true_edge = sample_paths(graph, n_paths, set(task.model.edges) - task.true_edges, sample_type=conf.sample_type)
     min_test_true_edge_results, min_test_true_edge_sampled_results = minimality_test(
         model=task.model, 
         dataloader=task.test_loader,
@@ -488,7 +486,7 @@ if not true_edges_tested:
     save_json({e.name: result_to_json(r) for e, r in min_test_true_edge_sampled_results.items()}, score_dir, f"min_test_true_edge_sampled_results_{conf.max_edges_to_sample}_{min_postfix}")
 
 
-# In[34]:
+# In[27]:
 
 
 # plot p values``
@@ -496,7 +494,7 @@ fig, ax = plot_p_values(min_test_results, edges_under_test_scores, alpha=conf.al
 fig.savefig(repo_path_to_abs_path(exp_dir / "min_test_p_values.png"))
 
 
-# In[35]:
+# In[28]:
 
 
 if not true_edges_tested:
@@ -505,7 +503,7 @@ if not true_edges_tested:
     fig.savefig(repo_path_to_abs_path(score_dir / f"min_test_true_edge_p_values_{min_postfix_full}.png"))
 
 
-# In[36]:
+# In[29]:
 
 
 # plot frac of n 
@@ -515,7 +513,7 @@ fig, ax = plot_edge_k(min_test_results, edges_under_test_scores, batch_size * ba
 fig.savefig(repo_path_to_abs_path(exp_dir / "min_test_edge_k.png"))
 
 
-# In[37]:
+# In[30]:
 
 
 if not true_edges_tested:
@@ -525,7 +523,7 @@ if not true_edges_tested:
     fig.savefig(repo_path_to_abs_path(score_dir / f"min_test_true_edge_k_{min_postfix_full}.png"))
 
 
-# In[38]:
+# In[31]:
 
 
 # plot average diff 
@@ -533,7 +531,7 @@ fig, ax = plot_score_quantiles(min_test_results, edges_under_test_scores, quanti
 fig.savefig(repo_path_to_abs_path(exp_dir / f"min_test_score_quantiles.png"))
 
 
-# In[39]:
+# In[32]:
 
 
 if not true_edges_tested:
@@ -566,7 +564,7 @@ if not true_edges_tested:
 # 
 # 
 
-# In[40]:
+# In[33]:
 
 
 indep_result = independence_test(
@@ -583,7 +581,7 @@ indep_result = independence_test(
 save_json(result_to_json(indep_result), exp_dir, "indep_result")
 
 
-# In[41]:
+# In[34]:
 
 
 if not true_edges_tested:
