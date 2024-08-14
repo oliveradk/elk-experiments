@@ -114,7 +114,7 @@ from elk_experiments.utils import OUTPUT_DIR, repo_path_to_abs_path, load_cache,
 # config class
 @dataclass 
 class Config: 
-    task: str = "Indirect Object Identification Component Circuit"
+    task: str = "Docstring Component Circuit"
     use_abs: bool = True
     ablation_type: Union[AblationType, str] = AblationType.TOKENWISE_MEAN_CORRUPT
     grad_func: Optional[Union[GradFunc, str]] = GradFunc.LOGIT
@@ -449,6 +449,7 @@ min_test_results, min_test_sampled_results = minimality_test(
     alpha=conf.alpha, 
     q_star=conf.q_star, 
     max_edges_in_order=conf.max_edges_to_test_in_order,
+    max_edges_in_order_without_fail=conf.max_edges_to_test_without_fail,
     max_edges_to_sample=conf.max_edges_to_sample,
 )
 save_json({e.name: result_to_json(r) for e, r in min_test_results.items()}, exp_dir, "min_test_results")
