@@ -56,6 +56,7 @@ def minimality_test( #TODO: seperate infalted circuit seperate from dataset, get
     alpha: float = 0.05,
     q_star: float = 0.9,
     max_edges_in_order: Optional[int] = None,
+    max_edges_in_order_without_fail: Optional[int] = None,
     max_edges_to_sample: int = 0
 ) -> Tuple[Dict[Edge, MinResult], Dict[Edge, MinResult]]:
     if circuit_out is None:
@@ -153,6 +154,8 @@ def minimality_test( #TODO: seperate infalted circuit seperate from dataset, get
         has_failed = has_failed or result.not_minimal
         ordered_test_results[edge] = result
         if has_failed and i >= max_edges_in_order:
+            break
+        if i >= max_edges_in_order_without_fail:
             break
     
     # if failed, samples without replacement and run minimality test

@@ -129,6 +129,7 @@ class Config:
     sample_type: Union[SampleType, str] = SampleType.RANDOM_WALK
     side: Optional[Union[Side, str]] = None
     max_edges_to_test_in_order: int = 100 #TODO: change to 125
+    max_edges_to_test_without_fail: int = 500 #TODO: change to 125
     max_edges_to_sample: int = 100 # TODO: change to 125
     save_cache: bool = True
     
@@ -480,6 +481,7 @@ if not true_edges_tested:
         alpha=conf.alpha, 
         q_star=conf.q_star,
         max_edges_in_order=conf.max_edges_to_test_in_order,
+        max_edges_in_order_without_fail=conf.max_edges_to_test_without_fail,
         max_edges_to_sample=conf.max_edges_to_sample,
     )
     save_json({e.name: result_to_json(r) for e, r in min_test_true_edge_results.items()}, score_dir, f"min_test_true_edge_results_{min_postfix_full}")
