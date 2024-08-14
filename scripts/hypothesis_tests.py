@@ -172,15 +172,6 @@ if not is_notebook():
     conf = Config(**conf_dict)
 
 
-# In[9]:
-
-
-#TODO: remove
-conf_dict = OmegaConf.create({"epsilon":-0.4})
-conf_dict = OmegaConf.merge(OmegaConf.structured(conf), conf_dict)
-conf = Config(**conf_dict)
-
-
 # In[10]:
 
 
@@ -193,7 +184,7 @@ exp_dir = score_dir / f"{conf.use_abs}_{conf.alpha}_{conf.epsilon}_{conf.q_star}
 # if not is_notebook() and exp_dir.exists():
 #     print(f"Experiment directory {exp_dir} already exists. Exiting.")
 #     exit()
-# exp_dir.mkdir(exist_ok=True)
+exp_dir.mkdir(exist_ok=True)
 
 
 # In[11]:
