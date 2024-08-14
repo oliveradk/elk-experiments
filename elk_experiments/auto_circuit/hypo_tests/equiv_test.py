@@ -275,7 +275,7 @@ def plot_num_ablated_C_gt_M(
     ) -> Tuple[plt.Figure, plt.Axes]:
     if not -1 < epsilon < 1:
         raise ValueError("epsilon must be a float between -1 and 1 (exclusive)")
-    if epsilon < 0 and side != "left":
+    if epsilon < 0 and side != Side.LEFT:
         raise ValueError("epsilon is negative, side must be 'left'")
 
     # Extract data from results
