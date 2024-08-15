@@ -1,6 +1,7 @@
 from auto_circuit.tasks import Task, TASK_DICT
 from auto_circuit.metrics.official_circuits.circuits.ioi_official import (
     ioi_head_based_official_edges,
+    ioi_true_edges
 
 )
 
@@ -37,6 +38,21 @@ IOI_TOKEN_CIRCUIT_TASK: Task = Task(
 TASK_DICT.update({
     IOI_TOKEN_CIRCUIT_TASK.key:
     IOI_TOKEN_CIRCUIT_TASK
+})
+
+IOI_COMPONENT_CIRCUIT_TASK: Task = Task(
+    key="Indirect Object Identification Component Circuit",
+    name="Indirect Object Identification",
+    _model_def="gpt2-small",
+    _dataset_name="ioi/ioi_prompts",
+    batch_size=32,
+    batch_count=4,
+    _true_edge_func=ioi_true_edges,
+    token_circuit=False,
+)
+TASK_DICT.update({
+    IOI_COMPONENT_CIRCUIT_TASK.key:
+    IOI_COMPONENT_CIRCUIT_TASK
 })
 
 
