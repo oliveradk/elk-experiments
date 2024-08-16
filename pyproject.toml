@@ -33,6 +33,7 @@ kneed = "^0.8.5"
 evaluate = "^0.4.2"
 circuitsvis = {path = "CircuitsVis/python", develop = true}
 nbconvert = "^7.16.4"
+seaborn = "^0.13.2"
 
 
 [build-system]
