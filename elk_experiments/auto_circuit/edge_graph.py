@@ -23,7 +23,7 @@ NodeIdx = Tuple[int, int] # layer, head
 SeqNodeKey = Tuple[int, int, int, NodeType] # layer, head_idx, seq_idxs, node_type
 
 
-def node_name_to_type(node_name: str) -> Literal["q", "k", "v", "mlp", "resid"]:
+def node_name_to_type(node_name: str) -> NodeType:
     if node_name.endswith("Q"):
         return NodeType.Q
     if node_name.endswith("K"):

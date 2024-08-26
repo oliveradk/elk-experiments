@@ -6,11 +6,11 @@ from sklearn.metrics.pairwise import rbf_kernel
 from sklearn.preprocessing import KernelCenterer
 
 from auto_circuit.data import PromptDataLoader, PromptPairBatch
+from auto_circuit.prune import run_circuits
 from auto_circuit.types import PruneScores, BatchOutputs, PatchType, AblationType
 from auto_circuit.utils.patchable_model import PatchableModel
 from auto_circuit.utils.custom_tqdm import tqdm
 
-from elk_experiments.auto_circuit.auto_circuit_utils import run_circuits
 from elk_experiments.auto_circuit.score_funcs import GradFunc, AnswerFunc, get_score_func
 
 

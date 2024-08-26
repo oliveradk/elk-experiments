@@ -7,6 +7,8 @@ from scipy.stats import binom
 import matplotlib.pyplot as plt
 
 from auto_circuit.data import PromptDataLoader
+from auto_circuit.prune import run_circuits
+from auto_circuit.utils.tensor_ops import prune_scores_threshold
 from auto_circuit.types import (
     CircuitOutputs, 
     BatchKey,
@@ -19,7 +21,6 @@ from auto_circuit.types import (
 from auto_circuit.utils.patchable_model import PatchableModel
 from auto_circuit.utils.custom_tqdm import tqdm
 
-from elk_experiments.auto_circuit.auto_circuit_utils import run_circuits, prune_scores_threshold
 from elk_experiments.auto_circuit.score_funcs import GradFunc, AnswerFunc, get_score_func
 from elk_experiments.auto_circuit.edge_graph import SeqGraph, sample_paths 
 from elk_experiments.auto_circuit.hypo_tests.utils import edges_from_mask, get_edge_idx, set_score

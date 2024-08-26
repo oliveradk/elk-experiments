@@ -9,6 +9,7 @@ from scipy.stats import binom, beta
 import matplotlib.pyplot as plt
 
 from auto_circuit.data import PromptDataLoader
+from auto_circuit.prune import run_circuits
 from auto_circuit.types import (
     CircuitOutputs, 
     BatchKey,
@@ -19,7 +20,6 @@ from auto_circuit.types import (
 from auto_circuit.utils.patchable_model import PatchableModel
 from auto_circuit.utils.custom_tqdm import tqdm
 
-from elk_experiments.auto_circuit.auto_circuit_utils import run_circuits
 from elk_experiments.auto_circuit.score_funcs import GradFunc, AnswerFunc, get_score_func
 
 class Side(Enum): 
@@ -106,7 +106,6 @@ def equiv_test(
     answer_function: AnswerFunc,
     ablation_type: AblationType,
     edge_counts: Optional[list[int]] = None,
-    thresholds: Optional[list[float]] = None,
     use_abs: bool = True,
     model_out: Optional[Dict[BatchKey, torch.Tensor]] = None,
     full_model: Optional[torch.nn.Module] = None,
@@ -120,7 +119,6 @@ def equiv_test(
         model=model, 
         dataloader=dataloader,
         test_edge_counts=edge_counts,
-        thresholds=thresholds,
         prune_scores=prune_scores,
         patch_type=PatchType.TREE_PATCH,
         ablation_type=ablation_type,
@@ -179,13 +177,13 @@ def sweep_search_smallest_equiv(
         edge_counts = [i for i in range(interval_min, interval_max, width)]
         edge_counts.append(interval_max)
         test_results = equiv_test(
-            model, 
-            dataloader,
-            prune_scores,
-            grad_function,
-            answer_function,
-            ablation_type,
-            edge_counts,
+            model=model, 
+            dataloader=dataloader,
+            prune_scores=prune_scores,
+            grad_function=grad_function,
+            answer_function=answer_function,
+            ablation_type=ablation_type,
+            edge_counts=edge_counts,
             model_out=model_out,
             full_model=None,
             use_abs=use_abs,
