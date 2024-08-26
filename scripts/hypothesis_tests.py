@@ -69,11 +69,8 @@ from auto_circuit.types import BatchKey, AblationType
 from auto_circuit.prune_algos.mask_gradient import mask_gradient_prune_scores
 from auto_circuit.visualize import draw_seq_graph
 from auto_circuit.utils.custom_tqdm import tqdm
+from auto_circuit.utils.tensor_ops import desc_prune_scores, prune_scores_threshold
 
-from elk_experiments.auto_circuit.auto_circuit_utils import (
-    desc_prune_scores, 
-    prune_scores_threshold, 
-)
 from elk_experiments.auto_circuit.score_funcs import GradFunc, AnswerFunc
 
 from elk_experiments.auto_circuit.hypo_tests.equiv_test import (
